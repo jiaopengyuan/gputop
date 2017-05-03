@@ -179,6 +179,16 @@ chipsets = {
                 0x2364, # OACTXID
                 },
             },
+         'CNLGT2': {
+            'a_offset': 16,
+            'b_offset': 192,
+            'c_offset': 224,
+            'config_reg_blacklist': {
+                0x0d04, # NOA_ENABLE
+                0x9840, # GDT_CHICKEN_BITS
+                0x2364, # OACTXID
+                },
+            },
         }
 
 register_types = { 'OA', 'NOA', 'FLEX', 'PM' }

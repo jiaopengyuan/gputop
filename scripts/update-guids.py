@@ -168,7 +168,16 @@ for arg in args.xml:
 
 
 
-chipsets = [ 'hsw', 'bdw', 'chv', 'sklgt2', 'sklgt3', 'sklgt4', 'bxt', 'kblgt2', 'kblgt3', 'glk' ]
+chipsets = [
+    'hsw',
+    'bdw',
+    'chv',
+    'sklgt2', 'sklgt3', 'sklgt4',
+    'bxt',
+    'kblgt2', 'kblgt3',
+    'glk',
+    'cnlgt2',
+]
 
 for chipset in chipsets:
     filename = 'oa-' + chipset + '.xml'
