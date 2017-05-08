@@ -189,6 +189,8 @@ function GputopUI () {
 
     this.all_graphs_div = undefined;
     this.plotly_graphs = [];
+
+    this.connected = false;
 }
 
 GputopUI.prototype = Object.create(Gputop.prototype);
@@ -831,10 +833,6 @@ GputopUI.prototype.update = function(timestamp) {
             this.update_counter_bar(accumulated_counter);
         }
     }
-
-    /* We want smooth graph panning and bar graph updates while we have
-     * an active stream of metrics, so keep queuing redraws... */
-    this.queue_redraw();
 }
 
 GputopUI.prototype.queue_redraw = function() {
@@ -842,8 +840,10 @@ GputopUI.prototype.queue_redraw = function() {
         return;
 
     window.requestAnimationFrame((timestamp) => {
-        this.redraw_queued_ = false;
-        this.update(timestamp);
+        if (this.connected) {
+            this.redraw_queued_ = false;
+            this.update(timestamp);
+        }
     });
 
     this.redraw_queued_ = true;
@@ -1234,16 +1234,20 @@ GputopUI.prototype.reconnect = function(callback) {
         $( ".gputop-connecting" ).show();
         this.connect(address,
                      () => { //onopen
+                         this.connected = true;
+                         this.queue_redraw();
                          $( ".gputop-connecting" ).hide();
                          if (callback !== undefined)
                              callback();
                      },
                      () => { //onclose
+                         this.connected = false;
                          this.user_msg("Disconnected: Retry in 5 seconds", this.WARN);
                          // this will automatically close the alert and remove this if the users doesnt close it in 5 secs
                          setTimeout(this.reconnect.call(this, callback), 5000);
                      },
                      () => { // onerror
+                         this.connected = false;
                          this.user_msg("Failed to connect to " + address, this.ERROR);
                      }
                     );
