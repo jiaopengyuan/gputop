@@ -22,7 +22,8 @@
  * SOFTWARE.
  */
 
-#pragma once
+#ifndef __GPUTOP_OA_COUNTERS_H__
+#define __GPUTOP_OA_COUNTERS_H__
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -33,10 +34,11 @@
 
 #include <gputop-oa-metrics.h>
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct gputop_cc_stream;
 
 /* NB: the timestamps written by the OA unit are 32 bits counting in ~80
  * nanosecond units (at least on Haswell) so it wraps every ~ 6 minutes, this
@@ -79,15 +81,21 @@ uint64_t gputop_u32_clock_get_time(struct gputop_u32_clock *clock);
 void gputop_u32_clock_progress(struct gputop_u32_clock *clock,
                                uint32_t u32_timestamp);
 
-void gputop_cc_oa_accumulator_init(struct gputop_cc_oa_accumulator *accumulator,
-                                   struct gputop_metric_set *metric_set,
-                                   bool enable_ctx_switch_events,
-                                   int aggregation_period);
 void gputop_cc_oa_accumulator_clear(struct gputop_cc_oa_accumulator *accumulator);
 bool gputop_cc_oa_accumulate_reports(struct gputop_cc_oa_accumulator *accumulator,
                                      const uint8_t *report0,
                                      const uint8_t *report1);
 
+struct gputop_cc_oa_accumulator *
+gputop_cc_oa_accumulator_new(struct gputop_cc_stream *stream,
+                             int aggregation_period,
+                             bool enable_ctx_switch_events);
+void gputop_cc_oa_accumulator_set_period(struct gputop_cc_oa_accumulator *accumulator,
+                                         uint32_t aggregation_period);
+void gputop_cc_oa_accumulator_destroy(struct gputop_cc_oa_accumulator *accumulator);
+
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* __GPUTOP_OA_COUNTERS_H__ */

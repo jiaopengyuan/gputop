@@ -179,18 +179,21 @@ gputop_cc_oa_accumulator_clear(struct gputop_cc_oa_accumulator *accumulator)
     accumulator->flags = 0;
 }
 
-void
-gputop_cc_oa_accumulator_init(struct gputop_cc_oa_accumulator *accumulator,
-                              struct gputop_metric_set *metric_set,
-                              bool enable_ctx_switch_events,
-                              int aggregation_period)
+struct gputop_cc_oa_accumulator * EMSCRIPTEN_KEEPALIVE
+gputop_cc_oa_accumulator_new(struct gputop_cc_stream *stream,
+                             int aggregation_period,
+                             bool enable_ctx_switch_events)
 {
+    struct gputop_cc_oa_accumulator *accumulator = malloc(sizeof(*accumulator));
+
     assert(accumulator);
-    assert(metric_set);
-    assert(metric_set->perf_oa_format);
+    assert(stream);
+    assert(stream->oa_metric_set);
 
     memset(accumulator, 0, sizeof(*accumulator));
-    accumulator->metric_set = metric_set;
+    accumulator->metric_set = stream->oa_metric_set;
     accumulator->aggregation_period = aggregation_period;
     accumulator->enable_ctx_switch_events = enable_ctx_switch_events;
+
+    return accumulator;
 }

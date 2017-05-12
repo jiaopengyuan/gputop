@@ -22,16 +22,16 @@
  * SOFTWARE.
  */
 
-#pragma once
+#ifndef __GPUTOP_CLIENT_C_H__
+#define __GPUTOP_CLIENT_C_H__
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <inttypes.h>
 #include <string.h>
 #include <sys/types.h>
-
-#include "gputop-oa-counters.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -87,6 +87,9 @@ struct gputop_cc_stream {
     void *js_priv;
 };
 
+struct gputop_cc_oa_accumulator;
+struct gputop_cc_oa_timeline;
+
 int gputop_cc_get_counter_id(const char *guid, const char *counter_symbol_name);
 
 void gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
@@ -102,14 +105,6 @@ struct gputop_cc_stream *
 gputop_cc_oa_stream_new(const char *guid);
 void gputop_cc_stream_destroy(struct gputop_cc_stream *stream);
 
-struct gputop_cc_oa_accumulator *
-gputop_cc_oa_accumulator_new(struct gputop_cc_stream *stream,
-                             int aggregation_period,
-                             bool enable_ctx_switch_events);
-void gputop_cc_oa_accumulator_set_period(struct gputop_cc_oa_accumulator *accumulator,
-                                         uint32_t aggregation_period);
-void gputop_cc_oa_accumulator_destroy(struct gputop_cc_oa_accumulator *accumulator);
-
 struct gputop_cc_stream *gputop_cc_tracepoint_stream_new(void);
 void gputop_cc_tracepoint_add_field(struct gputop_cc_stream *stream,
                                     const char *name,
@@ -124,3 +119,5 @@ void gputop_cc_handle_tracepoint_message(struct gputop_cc_stream *stream,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* __GPUTOP_CLIENT_C_H__ */

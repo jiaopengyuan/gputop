@@ -43,8 +43,6 @@
 #include "gputop-client-c.h"
 #include "gputop-client-c-runtime.h"
 
-#include "gputop-oa-counters.h"
-
 #include "oa-hsw.h"
 #include "oa-bdw.h"
 #include "oa-chv.h"
@@ -426,43 +424,6 @@ gputop_cc_oa_stream_new(const char *hw_config_guid)
 
     return stream;
 }
-
-struct gputop_cc_oa_accumulator * EMSCRIPTEN_KEEPALIVE
-gputop_cc_oa_accumulator_new(struct gputop_cc_stream *stream,
-                             int aggregation_period,
-                             bool enable_ctx_switch_events)
-{
-    struct gputop_cc_oa_accumulator *accumulator = malloc(sizeof(*accumulator));
-
-    assert(accumulator);
-    assert(stream);
-
-    gputop_cc_oa_accumulator_init(accumulator,
-                                  stream->oa_metric_set,
-                                  enable_ctx_switch_events,
-                                  aggregation_period);
-    return accumulator;
-}
-
-void EMSCRIPTEN_KEEPALIVE
-gputop_cc_oa_accumulator_set_period(struct gputop_cc_oa_accumulator *accumulator,
-                                    uint32_t aggregation_period)
-{
-    assert(accumulator);
-
-    accumulator->aggregation_period = aggregation_period;
-}
-
-void EMSCRIPTEN_KEEPALIVE
-gputop_cc_oa_accumulator_destroy(struct gputop_cc_oa_accumulator *accumulator)
-{
-    assert(accumulator);
-
-    gputop_cr_console_log("Freeing client-c OA accumulator %p\n", accumulator);
-
-    free(accumulator);
-}
-
 
 struct gputop_cc_stream * EMSCRIPTEN_KEEPALIVE
 gputop_cc_tracepoint_stream_new(void)

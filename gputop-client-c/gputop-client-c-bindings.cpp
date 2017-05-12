@@ -29,6 +29,7 @@
 
 #include "gputop-client-c.h"
 #include "gputop-client-c-bindings.h"
+#include "gputop-oa-counters.h"
 
 #define ARRAY_LENGTH(A) (sizeof(A)/sizeof(A[0]))
 
