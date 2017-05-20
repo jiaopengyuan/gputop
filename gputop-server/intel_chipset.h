@@ -221,6 +221,19 @@
 #define PCI_CHIP_GLK			0x3184
 #define PCI_CHIP_GLK_2X6		0x3185
 
+#define PCI_CHIP_CANNONLAKE_U_0		0x5A52
+#define PCI_CHIP_CANNONLAKE_U_1		0x5A5A
+#define PCI_CHIP_CANNONLAKE_U_2		0x5A42
+#define PCI_CHIP_CANNONLAKE_U_3		0x5A4A
+
+#define PCI_CHIP_CANNONLAKE_Y_0		0x5A51
+#define PCI_CHIP_CANNONLAKE_Y_1		0x5A59
+#define PCI_CHIP_CANNONLAKE_Y_2		0x5A41
+#define PCI_CHIP_CANNONLAKE_Y_3		0x5A49
+#define PCI_CHIP_CANNONLAKE_Y_4		0x5A71
+#define PCI_CHIP_CANNONLAKE_Y_5		0x5A79
+
+
 #define IS_MOBILE(devid)	((devid) == PCI_CHIP_I855_GM || \
 				 (devid) == PCI_CHIP_I915_GM || \
 				 (devid) == PCI_CHIP_I945_GM || \
@@ -448,6 +461,9 @@
 				 (devid) == PCI_CHIP_BROXTON_2	|| \
 				 (devid) == PCI_CHIP_BROXTON_3	|| \
 				 (devid) == PCI_CHIP_BROXTON_4)
+
+#define IS_GEMINILAKE(devid)	((devid) == PCI_CHIP_GLK || \
+				 (devid) == PCI_CHIP_GLK_2X6)
 
 #define IS_GEMINILAKE(devid)	((devid) == PCI_CHIP_GLK || \
 				 (devid) == PCI_CHIP_GLK_2X6)

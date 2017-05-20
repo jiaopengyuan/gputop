@@ -164,11 +164,37 @@ gputop_cc_handle_i915_perf_message_binding(const v8::FunctionCallbackInfo<Value>
         accumulators[i] = accumulator;
     }
 
+    Local<Array> timelines_js = Local<Array>::Cast(args[5]);
+    int n_timelines = timelines_js->Length();
+
+    if (n_timelines > 256 || n_timelines != args[6]->NumberValue()) {
+        isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Spurious value for N timelines")));
+        return;
+    }
+    struct gputop_cc_oa_timeline *timelines[n_timelines];
+
+    for (int i = 0; i < n_timelines; i++) {
+        if (!timelines_js->Get(0)->IsObject()) {
+            isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Non object in timeline array")));
+            return;
+        }
+
+        Local<Object> obj = timelines_js->Get(0)->ToObject();
+
+        CPtrObj *ptr = node::ObjectWrap::Unwrap<CPtrObj>(obj);
+        struct gputop_cc_oa_timeline *timeline =
+            (struct gputop_cc_oa_timeline *)ptr->ptr_;
+
+        timelines[i] = timeline;
+    }
+
     gputop_cc_handle_i915_perf_message(stream,
                                        static_cast<uint8_t *>(data_contents.Data()) + offset,
                                        len,
                                        accumulators,
-                                       n_accumulators);
+                                       n_accumulators,
+                                       timelines,
+                                       n_timelines);
 }
 
 void
@@ -339,6 +365,66 @@ gputop_cc_oa_accumulator_destroy_binding(const v8::FunctionCallbackInfo<Value>& 
 }
 
 void
+gputop_cc_oa_timeline_new_binding(const v8::FunctionCallbackInfo<Value>& args)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    if (args.Length() < 2) {
+        isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Wrong number of arguments")));
+        return;
+    }
+
+    CPtrObj *ptr = node::ObjectWrap::Unwrap<CPtrObj>(args[0]->ToObject());
+    struct gputop_cc_stream *stream = static_cast<struct gputop_cc_stream *>(ptr->ptr_);
+
+    struct gputop_cc_oa_timeline *timeline =
+        gputop_cc_oa_timeline_new(stream,
+                                  args[1]->NumberValue()); //enable_ctx_switch_events
+
+    Local<Object> accumulator_obj = bind_c_struct(isolate, timeline, &timeline->js_priv);
+    args.GetReturnValue().Set(accumulator_obj);
+}
+
+void
+gputop_cc_oa_timeline_clear_binding(const v8::FunctionCallbackInfo<Value>& args)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    if (args.Length() < 1) {
+        isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Wrong number of arguments")));
+        return;
+    }
+
+    CPtrObj *ptr = node::ObjectWrap::Unwrap<CPtrObj>(args[0]->ToObject());
+    struct gputop_cc_oa_timeline *timeline = static_cast<struct gputop_cc_oa_timeline *>(ptr->ptr_);
+
+    gputop_cc_oa_timeline_clear(timeline);
+}
+
+void
+gputop_cc_oa_timeline_destroy_binding(const v8::FunctionCallbackInfo<Value>& args)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    if (args.Length() < 1) {
+        isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, "Wrong number of arguments")));
+        return;
+    }
+
+    CPtrObj *ptr = node::ObjectWrap::Unwrap<CPtrObj>(args[0]->ToObject());
+    struct gputop_cc_oa_timeline *timeline = static_cast<struct gputop_cc_oa_timeline *>(ptr->ptr_);
+    JSPriv *js_priv = static_cast<JSPriv *>(timeline->js_priv);
+
+    delete js_priv;
+    timeline->js_priv = nullptr;
+
+    gputop_cc_oa_timeline_destroy(timeline);
+}
+
+void
 gputop_cc_tracepoint_stream_new_binding(const v8::FunctionCallbackInfo<Value>& args)
 {
     Isolate* isolate = Isolate::GetCurrent();
@@ -430,6 +516,9 @@ Init(Handle<Object> exports)
     EXPORT(gputop_cc_oa_accumulator_set_period);
     EXPORT(gputop_cc_oa_accumulator_clear);
     EXPORT(gputop_cc_oa_accumulator_destroy);
+    EXPORT(gputop_cc_oa_timeline_new);
+    EXPORT(gputop_cc_oa_timeline_clear);
+    EXPORT(gputop_cc_oa_timeline_destroy);
     EXPORT(gputop_cc_tracepoint_stream_new);
     EXPORT(gputop_cc_tracepoint_add_field);
     EXPORT(gputop_cc_handle_tracepoint_message);

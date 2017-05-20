@@ -32,7 +32,7 @@ var LibraryGpuTopWeb = {
     _gputop_cr_console_log: function (message) {
         var gputop = Module['gputop_singleton'];
         if (gputop !== undefined)
-            gputop.log(Pointer_stringify(message));
+            gputop.log(Pointer_stringify(message), gputop.LOG);
         else
             console.log(Pointer_stringify(message));
     },
@@ -70,6 +70,7 @@ var LibraryGpuTopWeb = {
         }
     },
 
+    // Accumlators
     _gputop_cr_accumulator_start_update: function (stream_ptr, accumulator_ptr, events_mask, start_timestamp, end_timestamp) {
         var gputop = Module['gputop_singleton'];
         if (gputop !== undefined)
@@ -90,6 +91,45 @@ var LibraryGpuTopWeb = {
         var gputop = Module['gputop_singleton'];
         if (gputop !== undefined)
             gputop.accumulator_end_update.call(gputop);
+        else
+            console.error("Gputop singleton not initialized");
+    },
+
+    // Timelines
+    _gputop_cr_timeline_start_update: function (stream_ptr, timeline_ptr, start_timestamp, end_timestamp) {
+        var gputop = Module['gputop_singleton'];
+        if (gputop !== undefined)
+            return gputop.timeline_start_update.call(gputop, stream_ptr, timeline_ptr, start_timestamp, end_timestamp);
+        else {
+            console.error("Gputop singleton not initialized");
+            return false;
+        }
+    },
+    _gputop_cr_timeline_task_start_update: function (ctx_id, start_timestamp, end_timestamp) {
+        var gputop = Module['gputop_singleton'];
+        if (gputop !== undefined)
+            gputop.timeline_task_start_update.call(gputop, ctx_id, start_timestamp, end_timestamp);
+        else
+            console.error("Gputop singleton not initialized");
+    },
+    _gputop_cr_timeline_task_append_count: function (counter_idx, max, value) {
+        var gputop = Module['gputop_singleton'];
+        if (gputop !== undefined)
+            gputop.timeline_task_append_count.call(gputop, counter_idx, max, value);
+        else
+            console.error("Gputop singleton not initialized");
+    },
+    _gputop_cr_timeline_task_end_update: function () {
+        var gputop = Module['gputop_singleton'];
+        if (gputop !== undefined)
+            gputop.timeline_task_end_update.call(gputop);
+        else
+            console.error("Gputop singleton not initialized");
+    },
+    _gputop_cr_timeline_end_update: function () {
+        var gputop = Module['gputop_singleton'];
+        if (gputop !== undefined)
+            gputop.timeline_end_update.call(gputop);
         else
             console.error("Gputop singleton not initialized");
     },

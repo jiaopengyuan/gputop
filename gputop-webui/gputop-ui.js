@@ -415,6 +415,10 @@ GputopUI.prototype.update_metric_set_stream = function(metric) {
             metric.destroy_oa_accumulator(metric.bars_accumulator);
             metric.bars_accumulator = undefined;
         }
+        if (metric.timeline !== undefined) {
+            metric.destroy_oa_timeline(metric.timeline);
+            metric.timeline = undefined;
+        }
     }
 
     function _do_open() {
@@ -432,6 +436,8 @@ GputopUI.prototype.update_metric_set_stream = function(metric) {
                  * frequency...
                  */
                 metric.bars_accumulator = metric.create_oa_accumulator({ period_ns: 500000000 });
+
+                metric.timeline = metric.create_oa_timeline({ period_ns: 500000000 });
 
                 if (metric.open_config.paused)
                     this.replay_i915_perf_history(metric);
@@ -975,10 +981,11 @@ GputopUI.prototype.user_msg = function(message, level){
         return;
     }
 
+    console.log('add alert : ' + message);
     $('#alert_placeholder').append('<div id="alertdiv" class="alert ' +
         alerttype + '"><a class="close" data-dismiss="alert">×</a><span>'+message+'</span></div>')
         setTimeout(function() { // this will automatically close the alert and remove this if the users doesnt close it in 5 secs
-            $("#alertdiv").remove();
+            $("#alert_placeholder").empty();
         }, dismiss_time);
 }
 
@@ -1229,6 +1236,7 @@ GputopUI.prototype.reconnect = function(callback) {
         this.demo_mode = false;
 
     function do_connect() {
+        console.log('do_connect');
         $( ".gputop-connecting" ).show();
         this.connect(address,
                      () => { //onopen
@@ -1242,7 +1250,8 @@ GputopUI.prototype.reconnect = function(callback) {
                          this.connected = false;
                          this.user_msg("Disconnected: Retry in 5 seconds", this.WARN);
                          // this will automatically close the alert and remove this if the users doesnt close it in 5 secs
-                         setTimeout(this.reconnect.call(this, callback), 5000);
+                         console.log('schedule reconnect');
+                         setTimeout(this.reconnect.bind(this, callback), 5000);
                      },
                      () => { // onerror
                          this.connected = false;
@@ -1251,12 +1260,7 @@ GputopUI.prototype.reconnect = function(callback) {
                     );
     }
 
-    if (this.demo_mode !== current_demo_mode) {
-        this.init_interface(() => {
-            do_connect.call(this);
-        });
-    } else
-        do_connect.call(this);
+    do_connect.call(this);
 }
 
 GputopUI.prototype.dispose = function() {

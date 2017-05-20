@@ -44,8 +44,8 @@ gputop_console(int level, const char *message)
     HandleScope scope(isolate);
 
     Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
-    Local<Object> console = gputop->Get(String::NewFromUtf8(isolate, "console"))->ToObject();
-    Local<Function> log = Local<Function>::Cast(console->Get(String::NewFromUtf8(isolate, "log")));
+    //Local<Object> console = gputop->Get(String::NewFromUtf8(isolate, "Gputop"))->ToObject();
+    Local<Function> log = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "log")));
 
     Local<Value> argv[] = {
         String::NewFromUtf8(isolate, message),
@@ -75,20 +75,8 @@ _gputop_cr_console_error(const char *message)
 void
 _gputop_cr_console_assert(bool condition, const char *message)
 {
-    Isolate* isolate = Isolate::GetCurrent();
-    HandleScope scope(isolate);
-
-    Local<Context> ctx = isolate->GetCurrentContext();
-    Local<Object> ctx_scope = ctx->Global();
-
-    Local<Object> console = ctx_scope->Get(String::NewFromUtf8(isolate, "console"))->ToObject();
-    Local<Function> fn = Local<Function>::Cast(console->Get(String::NewFromUtf8(isolate, "assert")));
-
-    Local<Value> argv[] = {
-        Boolean::New(isolate, condition),
-        String::NewFromUtf8(isolate, message)
-    };
-    fn->Call(ctx_scope, ARRAY_LENGTH(argv), argv);
+   if (condition)
+      gputop_console(2, message);
 }
 
 void
@@ -160,5 +148,83 @@ _gputop_cr_accumulator_end_update(void)
     fn->Call(gputop, ARRAY_LENGTH(argv), argv);
 }
 
+bool
+_gputop_cr_timeline_start_update(struct gputop_cc_stream *stream,
+                                 struct gputop_cc_oa_timeline *timeline,
+                                 double start_timestamp, double end_timestamp)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
 
+    Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
+    Local<Function> fn = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "timeline_start_update")));
 
+    JSPriv *stream_js_priv = static_cast<JSPriv *>(stream->js_priv);
+    Local<Object> stream_js = Local<Object>::New(isolate, stream_js_priv->js_obj);
+    JSPriv *timeline_js_priv = static_cast<JSPriv *>(timeline->js_priv);
+    Local<Object> timeline_js = Local<Object>::New(isolate, timeline_js_priv->js_obj);
+
+    Local<Value> argv[] = { stream_js,
+                            timeline_js,
+                            Number::New(isolate, start_timestamp),
+                            Number::New(isolate, end_timestamp) };
+    Local<Value> ret = fn->Call(gputop, ARRAY_LENGTH(argv), argv);
+
+    return ret->BooleanValue();
+}
+
+void
+_gputop_cr_timeline_task_start_update(uint32_t ctx_id,
+                                      double start_timestamp,
+                                      double end_timestamp)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
+    Local<Function> fn = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "timeline_task_start_update")));
+
+    Local<Value> argv[] = { Number::New(isolate, ctx_id),
+                            Number::New(isolate, start_timestamp),
+                            Number::New(isolate, end_timestamp) };
+    fn->Call(gputop, ARRAY_LENGTH(argv), argv);
+}
+
+void
+_gputop_cr_timeline_task_append_count(int counter, double max, double value)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
+    Local<Function> fn = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "timeline_task_append_count")));
+
+    Local<Value> argv[] = { Number::New(isolate, counter),
+                            Number::New(isolate, max),
+                            Number::New(isolate, value) };
+    fn->Call(gputop, ARRAY_LENGTH(argv), argv);
+}
+
+void _gputop_cr_timeline_task_end_update(void)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
+    Local<Function> fn = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "timeline_task_end_update")));
+
+    Local<Value> argv[] = { };
+    fn->Call(gputop, ARRAY_LENGTH(argv), argv);
+}
+
+void _gputop_cr_timeline_end_update(void)
+{
+    Isolate* isolate = Isolate::GetCurrent();
+    HandleScope scope(isolate);
+
+    Local<Object> gputop = Local<Object>::New(isolate, gputop_cc_singleton);
+    Local<Function> fn = Local<Function>::Cast(gputop->Get(String::NewFromUtf8(isolate, "timeline_end_update")));
+
+    Local<Value> argv[] = { };
+    fn->Call(gputop, ARRAY_LENGTH(argv), argv);
+}

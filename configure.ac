@@ -200,6 +200,7 @@ gputop-client/Makefile
 gputop-client-c/Makefile
 gputop-webui/Makefile
 gputop-csv/Makefile
+gputop-timeline/Makefile
 gputop-tracepoints/Makefile
 )
 

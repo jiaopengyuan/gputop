@@ -144,6 +144,7 @@ function Metric (gputopParent) {
     this.server_handle = 0;
 
     this.oa_accumulators = [];
+    this.oa_timelines = [];
 }
 
 Metric.prototype.find_counter_by_name = function(symbol_name) {
@@ -292,6 +293,7 @@ function Gputop () {
      */
     this.cc_stream_ptr_to_obj_map = {};
     this.cc_oa_accumulator_ptr_to_obj_map = {}
+    this.cc_oa_timeline_ptr_to_obj_map = {}
 
     this.current_update_ = { metric: null };
 
@@ -466,60 +468,82 @@ Gputop.prototype.clear_accumulated_metrics = function(metric) {
             accumulated_counter.updates = [];
         }
     }
+    for (var i = 0; i < metric.oa_timelines.length; i++) {
+        var timeline = metric.oa_timelines[i];
+        timeline.tasks = [];
+    }
 }
+
+Gputop.prototype._stream_data = function(metric, data) {
+    var stream = metric.stream;
+
+    var sp = cc.Runtime.stackSave();
+
+    var stack_data = cc.allocate(data, 'i8', cc.ALLOC_STACK);
+
+    var n_accumulators = metric.oa_accumulators.length;
+    var n_timelines = metric.oa_timelines.length;
+
+    /* XXX: unfortunately we can't handle passing an array of accumulator
+     * pointers consistently between Node.js and Emscripten bindings.
+     * With Emscripten we're passing a packed array of uint32 integers
+     * as pointers, while for Node.js we want to pass a standard Javascript
+     * array and let the binding implementation map this into an array
+     * before calling the real C function.
+     */
+    if (using_emscripten) {
+        /* Note: 2nd type arg ignored when 1st arg is a size/number in bytes*/
+        var vec_acc = cc.allocate(4 * n_accumulators, '*', cc.ALLOC_STACK);
+        for (var j = 0; j < n_accumulators; j++) {
+            var accumulator = metric.oa_accumulators[j];
+            cc.setValue(vec_acc + j * 4, accumulator.cc_accumulator_ptr_, '*');
+        }
+        var vec_tim = cc.allocate(4 * n_timelines, '*', cc.ALLOC_STACK);
+        for (var j = 0; j < n_timelines; j++) {
+            var timeline = metric.oa_timelines[j];
+            cc.setValue(vec_tim + j * 4, timeline.cc_timeline_ptr_, '*');
+        }
+
+        if (stream.cc_stream_ptr_ === 0) {
+            gputop.log("NULL CC Stream while replaying i915 perf message", this.ERROR);
+        } else
+            cc._gputop_cc_handle_i915_perf_message(stream.cc_stream_ptr_,
+                                                   stack_data,
+                                                   data.length,
+                                                   vec_acc,
+                                                   n_accumulators,
+                                                   vec_tim,
+                                                   n_timelines);
+    } else {
+        var vec_acc = [];
+        for (var j = 0; j < n_accumulators; j++) {
+            var accumulator = metric.oa_accumulators[j];
+            vec_acc.push(accumulator.cc_accumulator_ptr_);
+        }
+        var vec_tim = [];
+        for (var j = 0; j < n_timelines; j++) {
+            var timeline = metric.oa_timelines[j];
+            vec_tim.push(timeline.cc_timeline_ptr_);
+        }
+
+        cc._gputop_cc_handle_i915_perf_message(stream.cc_stream_ptr_,
+                                               stack_data,
+                                               data.length,
+                                               vec_acc,
+                                               n_accumulators,
+                                               vec_tim,
+                                               n_timelines);
+    }
+
+    cc.Runtime.stackRestore(sp);
+};
 
 Gputop.prototype.replay_i915_perf_history = function(metric) {
     this.clear_accumulated_metrics(metric);
 
-    var stream = metric.stream;
-
     for (var i = 0; i < this.i915_perf_history.length; i++) {
         var data = this.i915_perf_history[i];
-
-        var sp = cc.Runtime.stackSave();
-
-        var stack_data = cc.allocate(data, 'i8', cc.ALLOC_STACK);
-
-        var n_accumulators = metric.oa_accumulators.length;
-
-        /* XXX: unfortunately we can't handle passing an array of accumulator
-         * pointers consistently between Node.js and Emscripten bindings.
-         * With Emscripten we're passing a packed array of uint32 integers
-         * as pointers, while for Node.js we want to pass a standard Javascript
-         * array and let the binding implementation map this into an array
-         * before calling the real C function.
-         */
-        if (using_emscripten) {
-            /* Note: 2nd type arg ignored when 1st arg is a size/number in bytes*/
-            var vec = cc.allocate(4 * n_accumulators, '*', cc.ALLOC_STACK);
-            for (var j = 0; j < n_accumulators; j++) {
-                var accumulator = metric.oa_accumulators[j];
-                cc.setValue(vec + j * 4, accumulator.cc_accumulator_ptr_, '*');
-            }
-
-            if (stream.cc_stream_ptr_ === 0) {
-                gputop.log("NULL CC Stream while replaying i915 perf message", this.ERROR);
-            } else
-                cc._gputop_cc_handle_i915_perf_message(stream.cc_stream_ptr_,
-                                                       stack_data,
-                                                       data.length,
-                                                       vec,
-                                                       n_accumulators);
-        } else {
-            var vec = [];
-            for (var j = 0; j < n_accumulators; j++) {
-                var accumulator = metric.oa_accumulators[j];
-                vec.push(accumulator.cc_accumulator_ptr_);
-            }
-
-            cc._gputop_cc_handle_i915_perf_message(stream.cc_stream_ptr_,
-                                                   stack_data,
-                                                   data.length,
-                                                   vec,
-                                                   n_accumulators);
-        }
-
-        cc.Runtime.stackRestore(sp);
+        this._stream_data(metric, data);
     }
 }
 
@@ -656,6 +680,150 @@ Gputop.prototype.accumulator_end_update = function () {
 Gputop.prototype.accumulator_clear = function (accumulator) {
     cc._gputop_cc_oa_accumulator_clear(accumulator.cc_accumulator_ptr_);
 }
+
+Gputop.prototype.timeline_start_update = function (stream_ptr,
+                                                   timeline_ptr,
+                                                   start_timestamp,
+                                                   end_timestamp) {
+    var update = this.current_update_;
+
+    console.assert(update.metric === null, "Started stream update before finishing previous update");
+
+    if (!(stream_ptr in this.cc_stream_ptr_to_obj_map)) {
+        console.error("Ignoring spurious update for unknown stream");
+        update.metric = null;
+        return false;
+    }
+
+    if (!(timeline_ptr in this.cc_oa_timeline_ptr_to_obj_map)) {
+        console.error("Ignoring spurious update for unknown OA accumulator");
+        update.metric = null;
+        return false;
+    }
+
+    var metric = this.cc_stream_ptr_to_obj_map[stream_ptr];
+    var timeline = this.cc_oa_timeline_ptr_to_obj_map[timeline_ptr];
+
+    update.metric = metric;
+    update.timeline = timeline;
+    update.start_timestamp = start_timestamp;
+    update.end_timestamp = end_timestamp;
+
+    timeline.tasks = [];
+
+    return true;
+};
+
+Gputop.prototype.timeline_task_start_update = function (ctx_id,
+                                                        start_timestamp,
+                                                        end_timestamp) {
+    var update = this.current_update_;
+
+    var metric = update.metric;
+    if (metric === null) {
+        /* Will have already logged an error when starting the update */
+        return;
+    }
+
+    var timeline = update.timeline;
+    timeline.tasks.push({ context_id: ctx_id,
+                          start_timestamp: start_timestamp,
+                          end_timestamp: end_timestamp,
+                          accumulated_counters: [],
+                        });
+
+    update.task = timeline.tasks[timeline.tasks.length - 1];
+
+    return true;
+};
+
+Gputop.prototype.timeline_task_append_count = function (counter_id, max, value) {
+    var update = this.current_update_;
+
+    var metric = update.metric;
+    if (metric === null) {
+        /* Will have already logged an error when starting the update */
+        return;
+    }
+
+    var timeline = update.timeline;
+    var task = update.task;
+
+    var counter = metric.cc_counters[counter_id];
+
+    if (counter_id >= task.accumulated_counters.length) {
+        for (var i = task.accumulated_counters.length; i <= counter_id; i++) {
+            task.accumulated_counters[i] = {
+                counter: metric.cc_counters[i],
+                latest_value: 0,
+                latest_max: 0,
+            };
+        }
+    }
+
+    var accumulated_counter = task.accumulated_counters[counter_id];
+
+    var reason = update.reason;
+
+    var start_timestamp = task.start_timestamp;
+    var end_timestamp = task.end_timestamp;
+    var duration = end_timestamp - start_timestamp;
+
+    value *= counter.units_scale;
+    max *= counter.units_scale;
+
+    if (counter.duration_dependent && (duration !== 0)) {
+        var per_sec_scale = 1000000000 / duration;
+        value *= per_sec_scale;
+        max *= per_sec_scale;
+    }
+
+    if (counter.record_data) {
+        accumulated_counter.latest_value = value;
+        accumulated_counter.latest_max = max;
+    }
+
+    if (value > counter.inferred_max)
+        counter.inferred_max = value;
+    if (max > counter.inferred_max)
+        counter.inferred_max = max;
+};
+
+Gputop.prototype.timeline_task_end_update = function () {
+    var update = this.current_update_;
+
+    var metric = update.metric;
+    if (metric === null) {
+        /* Will have already logged an error when starting the update */
+        return;
+    }
+
+    update.task = null;
+};
+
+Gputop.prototype.timeline_end_update = function () {
+    var update = this.current_update_;
+
+    var metric = update.metric;
+    if (metric === null) {
+        /* Will have already logged an error when starting the update */
+        return;
+    }
+
+    var task = update.task;
+    var timeline = update.timeline;
+
+    update.metric = null;
+    update.timeline = null;
+
+    this.notify_timeline_events(metric,
+                                timeline);
+};
+
+
+Gputop.prototype.timeline_clear = function (timeline) {
+    cc._gputop_cc_oa_timeline_clear(timeline.cc_timeline_ptr_);
+};
 
 Gputop.prototype.format_counter_value = function(accumulated_counter, compact) {
     var counter = accumulated_counter.counter;
@@ -890,6 +1058,41 @@ Metric.prototype.destroy_oa_accumulator = function(accumulator) {
     accumulator.id = -1;
 }
 
+Metric.prototype.create_oa_timeline = function(config) {
+    var stream = this.stream;
+
+    if (stream === undefined || stream.cc_stream_ptr_ === 0) {
+        this.gputop.log("Can't create OA timeline for Metric without open stream",
+                        this.gputop.ERROR);
+        return;
+    }
+
+    if (config.period_ns === undefined)
+        config.period_ns = 1000000000;
+
+    this.gputop.log("Creating timeline with aggregation period of " + config.period_ns + "ns",
+                    this.gputop.LOG);
+
+    var timeline = {};
+
+    timeline.tasks = [];
+
+    var sp = cc.Runtime.stackSave();
+
+    timeline.cc_timeline_ptr_ =
+        cc._gputop_cc_oa_timeline_new(stream.cc_stream_ptr_,
+                                      config.period_ns);
+
+    cc.Runtime.stackRestore(sp);
+
+    this.gputop.cc_oa_timeline_ptr_to_obj_map[timeline.cc_timeline_ptr_] = timeline;
+
+    timeline.id = this.oa_timelines.length;
+    this.oa_timelines.push(timeline);
+
+    return timeline;
+}
+
 /* We have to consider that Client C state isn't automatically garbage
  * collected so this should be called explicitly, when the Metric
  * stream is being gracefully closed, or there was a known error with
@@ -913,6 +1116,7 @@ Metric.prototype.dispose = function () {
             this.destroy_oa_accumulator(accumulator);
     }
     this.oa_accumulators = [];
+    this.oa_timelines = [];
 
     if (this.stream) {
         if (this.stream.cc_stream_ptr_ !== 0) {
@@ -1644,50 +1848,7 @@ function gputop_socket_on_message(evt) {
             if (this.i915_perf_history_size > 1048576) // 1 MB of data
                 this.i915_perf_history.shift();
 
-            var sp = cc.Runtime.stackSave();
-
-            var stack_data = cc.allocate(data, 'i8', cc.ALLOC_STACK);
-
-            var n_accumulators = metric.oa_accumulators.length;
-
-            /* XXX: unfortunately we can't handle passing an array of accumulator
-             * pointers consistently between Node.js and Emscripten bindings.
-             * With Emscripten we're passing a packed array of uint32 integers
-             * as pointers, while for Node.js we want to pass a standard Javascript
-             * array and let the binding implementation map this into an array
-             * before calling the real C function.
-             */
-            if (using_emscripten) {
-                /* Note: 2nd type arg ignored when 1st arg is a size/number in bytes*/
-                var vec = cc.allocate(4 * n_accumulators, '*', cc.ALLOC_STACK);
-                for (var i = 0; i < n_accumulators; i++) {
-                    var accumulator = metric.oa_accumulators[i];
-                    cc.setValue(vec + i * 4, accumulator.cc_accumulator_ptr_, '*');
-                }
-
-                if (metric.stream.cc_stream_ptr_ === 0) {
-                    gputop.log("NULL CC Stream while handling i915 perf message", this.ERROR);
-                } else
-                    cc._gputop_cc_handle_i915_perf_message(metric.stream.cc_stream_ptr_,
-                                                           stack_data,
-                                                           data.length,
-                                                           vec,
-                                                           n_accumulators);
-            } else {
-                var vec = [];
-                for (var i = 0; i < n_accumulators; i++) {
-                    var accumulator = metric.oa_accumulators[i];
-                    vec.push(accumulator.cc_accumulator_ptr_);
-                }
-
-                cc._gputop_cc_handle_i915_perf_message(metric.stream.cc_stream_ptr_,
-                                                       stack_data,
-                                                       data.length,
-                                                       vec,
-                                                       n_accumulators);
-            }
-
-            cc.Runtime.stackRestore(sp);
+            this._stream_data(metric, data);
         } else {
             console.log("Ignoring i915 perf data for unknown Metric object")
         }

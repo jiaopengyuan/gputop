@@ -70,13 +70,6 @@ struct oa_sample {
 
 #define U32_TO_VOID(val) ((void*) (uintptr_t) (val))
 
-static uint32_t
-oa_report_get_ctx_id(uint32_t *report32)
-{
-    /* TODO: deal with HSW... */
-    return report32[2] & 0x1fffff;
-}
-
 static void
 gputop_update_device_info_for_report(struct gputop_cc_stream *stream,
                                      uint32_t *report32)
@@ -92,6 +85,9 @@ gputop_update_device_info_for_report(struct gputop_cc_stream *stream,
 
     if (sseu_entry) {
         memcpy(&sseu_data, sseu_entry->data, sizeof(sseu_data));
+    } else if (ctx_id == INVALID_CTX_ID) {
+        /* No update when idle. */
+        return;
     } else {
         gputop_cr_console_error("missing sseu configuration for context %u/0x%x",
                                 ctx_id, ctx_id);
@@ -231,6 +227,91 @@ forward_oa_accumulator_events(struct gputop_cc_stream *stream,
     _gputop_cr_accumulator_end_update();
 }
 
+static void
+forward_oa_timeline_event(struct gputop_cc_stream *stream,
+                           struct gputop_cc_oa_timeline *oa_timeline)
+{
+    struct gputop_metric_set *oa_metric_set = stream->oa_metric_set;
+    /* Try to manage to avoid splitting tasks running on the GPU by waiting
+     * for the last item to finish (after context switch). */
+    int last_item = (oa_timeline->n_items > 1) ?
+        (oa_timeline->n_items - 2) :
+        (oa_timeline->n_items - 1);
+
+    if (!_gputop_cr_timeline_start_update(stream,
+                                          oa_timeline,
+                                          oa_timeline->items[0].first_timestamp,
+                                          oa_timeline->items[last_item].last_timestamp)) {
+        gputop_cc_oa_timeline_advance(oa_timeline, last_item);
+        return;
+    }
+
+    for (int i = 0; i <= last_item; i++) {
+        _gputop_cr_timeline_task_start_update(oa_timeline->items[i].ctx_id,
+                                              oa_timeline->items[i].first_timestamp,
+                                              oa_timeline->items[i].last_timestamp);
+
+        for (int j = 0; j < oa_metric_set->n_counters; j++) {
+            uint64_t u53_check;
+            double d_value = 0;
+            uint64_t max = 0;
+
+            struct gputop_metric_set_counter *counter = &oa_metric_set->counters[j];
+
+            /* Don't update the counter if the current configuration makes it
+             * unavailable. */
+            if (counter->available && !counter->available(&gputop_devinfo))
+                continue;
+
+            switch(counter->data_type) {
+            case GPUTOP_PERFQUERY_COUNTER_DATA_UINT64:
+                if (counter->max_uint64) {
+                    u53_check = counter->max_uint64(&gputop_devinfo, oa_metric_set,
+                                                    oa_timeline->items[j].deltas);
+                    if (u53_check > JS_MAX_SAFE_INTEGER) {
+                        gputop_cr_console_error("'Max' value is to large to represent in JavaScript: %s ", counter->symbol_name);
+                        u53_check = JS_MAX_SAFE_INTEGER;
+                    }
+                    max = u53_check;
+                }
+
+                u53_check = counter->oa_counter_read_uint64(&gputop_devinfo,
+                                                            oa_metric_set,
+                                                            oa_timeline->items[j].deltas);
+                if (u53_check > JS_MAX_SAFE_INTEGER) {
+                    gputop_cr_console_error("Clamping counter to large to represent in JavaScript %s ", counter->symbol_name);
+                    u53_check = JS_MAX_SAFE_INTEGER;
+                }
+                d_value = u53_check;
+                break;
+            case GPUTOP_PERFQUERY_COUNTER_DATA_FLOAT:
+                if (counter->max_float) {
+                    max = counter->max_float(&gputop_devinfo, oa_metric_set,
+                                             oa_timeline->items[j].deltas);
+                }
+
+                d_value = counter->oa_counter_read_float(&gputop_devinfo,
+                                                         oa_metric_set,
+                                                         oa_timeline->items[j].deltas);
+                break;
+            case GPUTOP_PERFQUERY_COUNTER_DATA_UINT32:
+            case GPUTOP_PERFQUERY_COUNTER_DATA_DOUBLE:
+            case GPUTOP_PERFQUERY_COUNTER_DATA_BOOL32:
+                gputop_cr_console_assert(0, "Unexpected counter data type");
+                break;
+            }
+
+            _gputop_cr_timeline_task_append_count(j, max, d_value);
+        }
+
+        _gputop_cr_timeline_task_end_update();
+    }
+
+    _gputop_cr_timeline_end_update();
+
+    gputop_cc_oa_timeline_advance(oa_timeline, last_item);
+}
+
 void EMSCRIPTEN_KEEPALIVE
 gputop_cc_handle_tracepoint_message(struct gputop_cc_stream *stream,
                                     uint8_t *data,
@@ -271,7 +352,9 @@ void EMSCRIPTEN_KEEPALIVE
 gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
                                    uint8_t *data, int data_len,
                                    struct gputop_cc_oa_accumulator **accumulators,
-                                   int n_accumulators)
+                                   int n_accumulators,
+                                   struct gputop_cc_oa_timeline **timelines,
+                                   int n_timelines)
 {
     const struct i915_perf_record_header *header;
     uint8_t *last = NULL;
@@ -288,9 +371,14 @@ gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
             assert(oa_accumulator);
             gputop_cc_oa_accumulator_clear(oa_accumulator);
         }
+        for (int i = 0; i < n_timelines; i++) {
+            struct gputop_cc_oa_timeline *oa_timeline = timelines[i];
+
+            assert(oa_timeline);
+            gputop_cc_oa_timeline_clear(oa_timeline);
+        }
     }
 
-    //int i = 0;
     for (header = (void *)data;
          (uint8_t *)header < (data + data_len);
          header = (void *)(((uint8_t *)header) + header->size))
@@ -342,6 +430,21 @@ gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
 
                         if (events)
                             forward_oa_accumulator_events(stream, oa_accumulator, events);
+                    }
+                }
+                for (int i = 0; i < n_timelines; i++) {
+                    struct gputop_cc_oa_timeline *oa_timeline =  timelines[i];
+
+                    assert(oa_timeline);
+
+                    if (gputop_cc_oa_timeline_accumulate_reports(oa_timeline,
+                                                                 last,
+                                                                 sample->oa_report)) {
+
+                        if (gputop_cc_oa_timeline_elapsed(oa_timeline) ||
+                            gputop_cc_oa_timeline_full(oa_timeline)) {
+                            forward_oa_timeline_event(stream, oa_timeline);
+                        }
                     }
                 }
             }

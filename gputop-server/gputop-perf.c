@@ -325,7 +325,7 @@ gputop_perf_stream_close(struct gputop_perf_stream *stream,
         }
         break;
     case GPUTOP_STREAM_I915_PERF:
-        if (stream->fd == -1) {
+        if (gputop_fake_mode) {
             uv_close((uv_handle_t *)&stream->fd_timer, stream_handle_closed_cb);
             stream->n_closing_uv_handles++;
 

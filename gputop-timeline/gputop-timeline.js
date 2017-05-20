@@ -1,0 +1,502 @@
+#!/usr/bin/env node
+'use strict';
+
+/*
+ * Copyright (C) 2017 Intel Corporation
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+const Gputop = require('gputop');
+const fs = require('fs');
+const ArgumentParser = require('argparse').ArgumentParser;
+const sp = require('sprintf');
+
+/* Don't want to pollute timeline output to stdout with log messages... */
+var stderr_log = new console.Console(process.stderr, process.stderr);
+
+function GputopTimeline(pretty_print)
+{
+    Gputop.Gputop.call(this);
+
+    this.pretty_print_csv_ = pretty_print;
+
+    this.stream = undefined;
+    this.metric = undefined;
+
+    this.requested_columns_ = [];
+
+    this.counters_ = [];
+
+    this.dummy_timestamp_counter = {
+        symbol_name: "Timestamp",
+        name: "Timestamp",
+        desc: "Sample timestamp (nanosecond resolution)",
+        units: "ns",
+    };
+    this.context_id_counter = {
+        symbol_name: "ContextID",
+        name: "Context ID",
+        desc: "Context ID of the current context",
+        units: "ID",
+    };
+
+    /* It's possible some columns will not correspond to
+     * available counters but we need to know at least
+     * one column with real data to check how many updates
+     * we've received.
+     */
+    this.reference_column = -1;
+
+    this.endl = process.platform === "win32" ? "\r\n" : "\n";
+
+    this.term_row_ = 0;
+
+    this.console = {
+        log: (msg) => {
+            if (args.debug)
+                stderr_log.log(msg);
+        },
+        warn: (msg) => {
+            if (args.debug)
+                stderr_log.warn(msg);
+        },
+        error: (msg) => {
+            stderr_log.error(msg);
+        },
+    };
+}
+
+GputopTimeline.prototype = Object.create(Gputop.Gputop.prototype);
+
+GputopTimeline.prototype.list_metric_set_counters = function(metric) {
+    var all_counters = [
+        this.dummy_timestamp_counter,
+        this.context_id_counter,
+    ];
+    var all = "Timestamp,ContextID"
+
+    metric.cc_counters.forEach((counter, idx, arr) => {
+        var units = counter.units;
+
+        if (counter.duration_dependent)
+            units += '/s';
+
+        all_counters.push({ symbol_name: counter.symbol_name, name: counter.name, desc: counter.description + " (" + units + ")" });
+        all += "," + counter.symbol_name;
+    });
+    all_counters.sort((a, b) => {
+        return a.symbol_name > b.symbol_name;
+    });
+    for (var i = 0, len = all_counters.length; i < len; i++) {
+        stderr_log.log(sp.sprintf("%-25s:%-25s - %s",
+                       all_counters[i].symbol_name,
+                       all_counters[i].name,
+                       all_counters[i].desc));
+    }
+    stderr_log.log("\nALL: " + all);
+}
+
+GputopTimeline.prototype.update_features = function(features)
+{
+    if (features.supported_oa_guids.length == 0) {
+        stderr_log.error("No OA metrics supported");
+        process.exit(1);
+        return;
+    }
+
+    if (args.metrics === 'list') {
+        stderr_log.log("\nList of metric sets selectable with --metrics=...");
+        for (var i = 0; i < features.supported_oa_guids.length; i++) {
+            var guid = features.supported_oa_guids[i];
+            var metric = this.lookup_metric_for_guid(guid);
+            stderr_log.log("" + metric.symbol_name + ": " + metric.name + ", hw-config-guid=" + guid);
+        }
+        process.exit(1);
+    }
+
+    for (var i = 0; i < features.supported_oa_guids.length; i++) {
+        var guid = features.supported_oa_guids[i];
+        var metric = this.lookup_metric_for_guid(guid);
+
+        if (metric.symbol_name === args.metrics) {
+            this.metric = metric;
+            break;
+        }
+    }
+
+    if (this.metric === undefined) {
+        stderr_log.error('Failed to look up metric set "' + args.metrics + '"');
+        process.exit(1);
+        return;
+    }
+
+    const max_period = 1000000000;
+    var oa_sampling_state =
+        this.calculate_sample_state_for_accumulation_period(max_period,
+                                                            max_period, // max period to account for 32bit counter overflow
+                                                            max_period / 10); // 10% error margin
+
+    if (args.columns === 'list') {
+        stderr_log.log("\nList of counters selectable with --columns=... (comma separated):\n");
+        this.list_metric_set_counters(this.metric);
+        process.exit(1);
+    }
+
+    var counter_index = {};
+    this.metric.cc_counters.forEach((counter, idx, arr) => {
+        counter_index[counter.symbol_name] = counter;
+    });
+
+    this.counters_.push(this.context_id_counter);
+
+    for (var i = 0; i < this.requested_columns_.length; i++) {
+        var name = this.requested_columns_[i];
+
+        if (name === "Timestamp") {
+            this.counters_.push(this.dummy_timestamp_counter);
+        } else if (name in counter_index) {
+            var counter = counter_index[name];
+            counter.record_data = true;
+            this.reference_column = this.counters_.length;
+            this.counters_.push(counter);
+        } else if (args.allow_unknown_columns) {
+            var skip = { symbol_name: name, record_data: false };
+            this.counters_.push(skip);
+        } else {
+            stderr_log.warn("Unsupported counter \"" + name + "\" - possible reasons:");
+            stderr_log.warn("> Typo?");
+            stderr_log.warn("> The counter might be conditional on a hardware feature - e.g. GT2 vs GT3 vs GT4");
+            stderr_log.warn("> The counter isn't part of the the \"" + this.metric.name + "\" metric set");
+            stderr_log.warn("\nThese are the available \"" + this.metric.name + "\" counters:\n");
+            this.list_metric_set_counters(this.metric);
+            process.exit(1);
+        }
+    }
+
+    if (this.reference_column >= 0) {
+        var columns = "";
+        var all_col_units = "";
+        var title_lines = [];
+        var current_titles_width = 0;
+
+        for (var i = 0; i < this.counters_.length; i++) {
+            var counter = this.counters_[i];
+            var col_width = 0;
+
+            if (this.pretty_print_csv_) {
+                var units = counter.units;
+
+                if (units === "percent") {
+                    var min_width = 6;
+                    units = "%";
+                } else {
+                    var min_width = 8;
+                }
+
+                if (counter.duration_dependent)
+                    units += '/s';
+                units = "(" + units + ")"
+
+                var camel_name = this.counters_[i].symbol_name;
+
+                col_width = min_width;
+
+                var col_title_lines = camel_name.split(/(?=[A-Z])/).map((sym) => {
+                    return sym.toUpperCase();
+                });
+
+                for (var l = title_lines.length; l < col_title_lines.length; l++)
+                    title_lines[l] = sp.sprintf("%" + current_titles_width + "s", "");
+
+                for (var l = 0; l < col_title_lines.length; l++) {
+                    if (col_title_lines[l].length >= col_width)
+                        col_width = col_title_lines[l].length + 1;
+                }
+
+                if (units.length >= col_width)
+                    col_width = units.length + 1;
+
+                for (var l = 0; l < col_title_lines.length; l++)
+                    title_lines[l] = sp.sprintf("%-" + current_titles_width + "s%s", title_lines[l], col_title_lines[l]);
+
+                counter.col_width_ = col_width;
+                var col_units = sp.sprintf("%-" + col_width + "s", units);
+                all_col_units += col_units
+
+                current_titles_width += col_width;
+            } else
+                columns += this.counters_[i].symbol_name + ",";
+        }
+
+        if (this.pretty_print_csv_) {
+            this.column_titles_ = title_lines;
+            this.column_units_ = all_col_units.trim();
+        } else
+            this.column_titles_ = [ columns.trim().slice(0, -1) ]; // drop trailing comma
+
+        stderr_log.warn("\n\nTimeline: Capture Settings:");
+        stderr_log.warn("Timeline:   Server: " + args.address);
+        stderr_log.warn("Timeline:   File: " + (args.file ? args.file : "STDOUT"));
+        stderr_log.warn("Timeline:   Metric Set: " + this.metric.name);
+        stderr_log.warn("Timeline:   Columns: " + args.columns);
+        stderr_log.warn("Timeline:   OA Hardware Sampling Exponent: " + oa_sampling_state.oa_exponent);
+        stderr_log.warn("Timeline:   OA Hardware Period: " + oa_sampling_state.period + "ns");
+        var real_accumulation_period = oa_sampling_state.factor * oa_sampling_state.period;
+        stderr_log.warn("Timeline:   Accumulation period: " + real_accumulation_period + "ns (" + oa_sampling_state.period + "ns * " + oa_sampling_state.factor + ")");
+
+        stderr_log.warn("\nTimeline: OS Info:");
+        stderr_log.warn("Timeline:   Kernel Build: " + features.get_kernel_build().trim());
+        stderr_log.warn("Timeline:   Kernel Release: " + features.get_kernel_release().trim());
+
+        stderr_log.warn("\nTimeline: CPU Info:");
+        stderr_log.warn("Timeline:   Model: " + features.get_cpu_model().trim());
+        stderr_log.warn("Timeline:   N Cores: " + features.get_n_cpus());
+
+        stderr_log.warn("\nTimeline: GPU Info:");
+        stderr_log.warn("Timeline:   Model: " + features.devinfo.get_prettyname());
+        stderr_log.warn("Timeline:   N EUs: " + features.devinfo.get_n_eus().toInt());
+        stderr_log.warn("Timeline:   EU Threads Count (total): " + features.devinfo.get_eu_threads_count().toInt());
+        stderr_log.warn("Timeline:   Min Frequncy: " + features.devinfo.get_gt_min_freq().toInt() + "Hz");
+        stderr_log.warn("Timeline:   Max Frequncy: " + features.devinfo.get_gt_max_freq().toInt() + "Hz");
+        stderr_log.warn("Timeline:   Timestamp Frequency: " + features.devinfo.get_timestamp_frequency().toInt() + "Hz");
+
+        if (features.notices.length >= 0) {
+            stderr_log.warn("\n\nTimeline: Capture Notices:");
+            features.notices.forEach((notice, i) => {
+                stderr_log.warn("Timeline:   - " + notice);
+            });
+        }
+
+        stderr_log.warn("\n\n");
+
+        this.metric.open({ oa_exponent: oa_sampling_state.oa_exponent },
+                        () => { //onopen
+
+                            /* The accumulator will keep going until the total
+                             * period from combining hw samples is >= the
+                             * requested accumulation period, so we slightly
+                             * reduce what we request to avoid overshooting.
+                             */
+                            metric.timeline = metric.create_oa_timeline({ period_ns: max_period * 0.9999 });
+
+                            this.column_titles_.map((line) => {
+                                this.stream.write(line + this.endl);
+                            });
+                            if (this.pretty_print_csv_)
+                                this.stream.write(this.column_units_ + this.endl);
+                        },
+                        () => { // onerror
+                        },
+                        () => { // onclose
+                        });
+    } else {
+        stderr_log.error("Failed to find counters matching requested columns");
+    }
+}
+
+function write_rows(metric, timeline, task)
+{
+    // /* Note: this ref[erence] counter is pre-dermined to be one with
+    //  * counter.record_data === true which we know we have valid timestamp
+    //  * information for that we can use for the whole row.
+    //  */
+    // var ref_counter = this.counters_[this.reference_column];
+    // var ref_accumulated_counter =
+    //     task.accumulated_counters[ref_counter.cc_counter_id_];
+
+    // stderr_log.assert(ref_accumulated_counter.counter === ref_counter,
+    //            "Spurious reference counter state");
+
+    var row_timestamp = task.end_timestamp - task.start_timestamp;//ref_accumulated_counter.latest_value;
+    var row = "";
+
+    for (var c = 0; c < this.counters_.length; c++) {
+        var counter = this.counters_[c];
+        var val = 0;
+
+        if (counter === this.dummy_timestamp_counter) {
+            if (this.pretty_print_csv_) {
+                var formatted_value = this.format_counter_value(this.dummy_timestamp_counter,
+                                                                true, row_timestamp);
+                row += sp.sprintf("%-" + counter.col_width_ + "s", formatted_value + ",");
+            } else
+                row += row_timestamp + ",";
+        } else if (counter === this.context_id_counter) {
+            if (this.pretty_print_csv_)
+                row += sp.sprintf("%-" + counter.col_width_ + "s", task.context_id + ",");
+            else
+                row += task.context_id + ",";
+        } else if (counter.record_data === true) {
+            var accumulated_counter = task.accumulated_counters[counter.cc_counter_id_];
+
+            var start = task.start_timestamp;
+            var end = task.end_timestamp;
+            //var max = accumulated_counter.updates[r][3];
+            var timestamp = start + (end - start) / 2;
+
+            stderr_log.assert(accumulated_counter.counter === counter, "Accumulated counter doesn't match column counter");
+            // stderr_log.assert(timestamp === row_timestamp,
+            //                   "Inconsistent timestamp: row ts: " + row_timestamp + "(" + row_start + ", " + row_end + ") != " +
+            //                   "counter ts: " + timestamp + "(" + start + "," + end + ")");
+
+            val = accumulated_counter.latest_value;
+
+            if (this.pretty_print_csv_) {
+                var formatted_value = this.format_counter_value(accumulated_counter.counter, true, val);
+                row += sp.sprintf("%-" + counter.col_width_ + "s", formatted_value + ",");
+            } else
+                row += val + ","
+        } else {
+            /* NB: some columns may have placeholder counter objects (with
+             * .record_data == false) if they aren't available on this
+             * system
+             */
+            if (this.pretty_print_csv_)
+                row += sp.sprintf("%-" + counter.col_width_ + "s", "N/A,");
+            else
+                row += "0,";
+        }
+    }
+
+    this.stream.write(row.trim().slice(0, -1) + this.endl);
+    this.term_row_++;
+    if (this.pretty_print_csv_ && this.term_row_ >= (process.stdout.rows - 1)) {
+        this.column_titles_.map((line) => {
+            this.stream.write(line + this.endl);
+        });
+        this.stream.write(this.column_units_ + this.endl);
+        this.term_row_ = 0;
+    }
+
+    // for (var c = 0; c < this.counters_.length; c++) {
+    //     var counter = this.counters_[c];
+    //     if (counter.record_data === true) {
+    //         var accumulated_counter =
+    //             accumulator.accumulated_counters[counter.cc_counter_id_];
+
+    //         accumulated_counter.updates.splice(0, n_rows);
+    //     }
+    // }
+}
+
+GputopTimeline.prototype.notify_timeline_events = function(metric, timeline, events) {
+    for (var i = 0; i < timeline.tasks.length; i++)
+        write_rows.call(this, metric, timeline, timeline.tasks[i]);
+}
+
+var parser = new ArgumentParser({
+    version: '0.0.1',
+    addHelp: true,
+    description: "GPU Top Timeline Dump Tool"
+});
+
+parser.addArgument(
+    [ '-a', '--address' ],
+    {
+        help: 'host:port to connect to (default localhost:7890)',
+        defaultValue: 'localhost:7890'
+    }
+);
+
+parser.addArgument(
+    [ '-m', '--metrics' ],
+    {
+        help: "Metric set to capture (default 'list')",
+        defaultValue: 'list',
+        constant: 'list',
+        nargs: '?'
+    }
+);
+
+parser.addArgument(
+    [ '-c', '--columns' ],
+    {
+        help: "Comma separated counter symbol names for columns (default = 'list')",
+        defaultValue: 'list',
+        constant: 'list',
+        nargs: '?'
+    }
+);
+
+parser.addArgument(
+    [ '-f', '--file' ],
+    {
+        help: "Timeline file to write",
+    }
+);
+
+parser.addArgument(
+    [ '-u', '--allow-unknown-columns' ],
+    {
+        help: "For automated profiling compatibility: report unsupported counter columns as zero",
+        action: 'storeTrue',
+        defaultValue: false
+    }
+);
+
+parser.addArgument(
+    [ '-d', '--debug' ],
+    {
+        help: "Verbose debug output",
+        action: 'storeTrue',
+        defaultValue: false
+    }
+);
+
+var args = parser.parseArgs();
+
+var gputop;
+var stream = null;
+
+function init(pretty_print) {
+    gputop = new GputopTimeline(pretty_print);
+
+    gputop.stream = stream;
+    gputop.requested_columns_ = args.columns.split(",");
+
+    gputop.connect(args.address, () => { // onopen
+        stderr_log.log("Connected");
+    }, () => { // onerror
+        stderr_log.log("Failed to connect to address = \"" + args.address + "\"");
+    });
+}
+
+if (args.file) {
+    stream = fs.createWriteStream(args.file);
+    stream.once('open', (fd) => {
+        init(false);
+    });
+} else {
+    stream = process.stdout;
+    init(true);
+}
+
+function close_and_exit(signo) {
+    if (args.file) {
+        stderr_log.log("Closing Timeline file...");
+        stream.end(() => {
+            process.exit(128 + signo);
+        });
+    } else
+        process.exit(128 + signo);
+}
+
+process.on('SIGINT', () => { close_and_exit(2); });
+process.on('SIGTERM', () => { close_and_exit(15); });

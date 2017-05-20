@@ -67,6 +67,18 @@ void _gputop_cr_accumulator_append_count(int counter,
                                          double max, double value);
 void _gputop_cr_accumulator_end_update(void);
 
+bool _gputop_cr_timeline_start_update(struct gputop_cc_stream *stream,
+                                      struct gputop_cc_oa_timeline *timeline,
+                                      double start_timestamp,
+                                      double end_timestamp);
+void _gputop_cr_timeline_task_start_update(uint32_t ctx_id,
+                                           double start_timestamp,
+                                           double end_timestamp);
+void _gputop_cr_timeline_task_append_count(int counter,
+                                           double max, double value);
+void _gputop_cr_timeline_task_end_update(void);
+void _gputop_cr_timeline_end_update(void);
+
 #ifdef __cplusplus
 }
 #endif

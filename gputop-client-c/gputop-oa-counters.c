@@ -33,13 +33,14 @@
 #include <string.h>
 
 #include "gputop-oa-counters.h"
+#include "gputop-util.h"
 
-#ifdef GPUTOP_CLIENT
+/* #ifdef GPUTOP_CLIENT */
 #include "gputop-client-c-runtime.h"
 #define dbg gputop_cr_console_log
-#else
-#include "gputop-log.h"
-#endif
+/* #else */
+/* #include "gputop-log.h" */
+/* #endif */
 
 struct gputop_devinfo gputop_devinfo;
 
@@ -103,30 +104,19 @@ accumulate_uint40(int a_index,
     *deltas += delta;
 }
 
-bool
-gputop_cc_oa_accumulate_reports(struct gputop_cc_oa_accumulator *accumulator,
-                                const uint8_t *report0,
-                                const uint8_t *report1)
+static void
+accumulate_reports(struct gputop_metric_set *metric_set,
+                   struct gputop_u32_clock *clock,
+                   const uint32_t *start, const uint32_t *end,
+                   uint64_t *deltas,
+                   uint64_t *first_timestamp,
+                   uint64_t *last_timestamp)
 {
-    struct gputop_metric_set *metric_set = accumulator->metric_set;
-    uint64_t *deltas = accumulator->deltas;
-    const uint32_t *start = (const uint32_t *)report0;
-    const uint32_t *end = (const uint32_t *)report1;
     int idx = 0;
     int i;
 
-    assert(report0 != report1);
-
-    /* technically a timestamp of zero is valid, but much more likely it
-     * indicates a problem...
-     */
-    if (start[1] == 0 || end[1] == 0) {
-        dbg("i915_oa: spurious report with timestamp of zero\n");
-        return false;
-    }
-
-    if (!accumulator->clock.initialized)
-        gputop_u32_clock_init(&accumulator->clock, start[1]);
+    if (clock->initialized)
+        gputop_u32_clock_init(clock, start[1]);
 
     switch (metric_set->perf_oa_format) {
     case I915_OA_FORMAT_A32u40_A4u32_B8_C8:
@@ -154,18 +144,43 @@ gputop_cc_oa_accumulate_reports(struct gputop_cc_oa_accumulator *accumulator,
         for (i = 0; i < 61; i++)
             accumulate_uint32(start + 3 + i, end + 3 + i, deltas + 1 + i);
         break;
+
     default:
         assert(0);
     }
 
-    gputop_u32_clock_progress(&accumulator->clock, start[1]);
-    if (accumulator->first_timestamp == 0)
-        accumulator->first_timestamp =
-            gputop_u32_clock_get_time(&accumulator->clock);
+    gputop_u32_clock_progress(clock, start[1]);
+    if (*first_timestamp == 0)
+        *first_timestamp = gputop_u32_clock_get_time(clock);
 
-    gputop_u32_clock_progress(&accumulator->clock, end[1]);
-    accumulator->last_timestamp =
-        gputop_u32_clock_get_time(&accumulator->clock);
+    gputop_u32_clock_progress(clock, end[1]);
+    *last_timestamp = gputop_u32_clock_get_time(clock);
+}
+
+bool
+gputop_cc_oa_accumulate_reports(struct gputop_cc_oa_accumulator *accumulator,
+                                const uint8_t *report0,
+                                const uint8_t *report1)
+{
+    const uint32_t *start = (const uint32_t *)report0;
+    const uint32_t *end = (const uint32_t *)report1;
+
+    assert(report0 != report1);
+
+    /* technically a timestamp of zero is valid, but much more likely it
+     * indicates a problem...
+     */
+    if (start[1] == 0 || end[1] == 0) {
+        dbg("i915_oa: spurious report with timestamp of zero\n");
+        return false;
+    }
+
+    accumulate_reports(accumulator->metric_set,
+                       &accumulator->clock,
+                       start, end,
+                       accumulator->deltas,
+                       &accumulator->first_timestamp,
+                       &accumulator->last_timestamp);
 
     return true;
 }
@@ -196,4 +211,145 @@ gputop_cc_oa_accumulator_new(struct gputop_cc_stream *stream,
     accumulator->enable_ctx_switch_events = enable_ctx_switch_events;
 
     return accumulator;
+}
+
+void EMSCRIPTEN_KEEPALIVE
+gputop_cc_oa_accumulator_set_period(struct gputop_cc_oa_accumulator *accumulator,
+                                    uint32_t aggregation_period)
+{
+    assert(accumulator);
+
+    accumulator->aggregation_period = aggregation_period;
+}
+
+void EMSCRIPTEN_KEEPALIVE
+gputop_cc_oa_accumulator_destroy(struct gputop_cc_oa_accumulator *accumulator)
+{
+    assert(accumulator);
+
+    gputop_cr_console_log("Freeing client-c OA accumulator %p\n", accumulator);
+
+    free(accumulator);
+}
+
+struct gputop_cc_oa_timeline * EMSCRIPTEN_KEEPALIVE
+gputop_cc_oa_timeline_new(struct gputop_cc_stream *stream,
+                          int aggregation_period)
+{
+    struct gputop_cc_oa_timeline *timeline = malloc(sizeof(*timeline));
+
+    assert(timeline);
+    assert(stream);
+    assert(stream->oa_metric_set);
+
+    gputop_cr_console_log("New timeline aggregation_period=%i\n", aggregation_period);
+
+    timeline->aggregation_period = aggregation_period;
+
+    timeline->metric_set = stream->oa_metric_set;
+
+    timeline->n_items = 0;
+    memset(timeline->items, 0, sizeof(timeline->items));
+
+    return timeline;
+}
+
+void EMSCRIPTEN_KEEPALIVE
+gputop_cc_oa_timeline_destroy(struct gputop_cc_oa_timeline *timeline)
+{
+    assert(timeline);
+
+    gputop_cr_console_log("Freeing client-c OA timeline %p\n", timeline);
+
+    free(timeline);
+}
+
+void
+gputop_cc_oa_timeline_clear(struct gputop_cc_oa_timeline *timeline)
+{
+   timeline->n_items = 0;
+   memset(timeline->items, 0, sizeof(timeline->items));
+}
+
+void
+gputop_cc_oa_timeline_advance(struct gputop_cc_oa_timeline *timeline,
+                              int item)
+{
+   assert(timeline);
+   assert(item < timeline->n_items);
+
+   for (int i = 0; i < (timeline->n_items - item); i++) {
+       memcpy(&timeline->items[i],
+              &timeline->items[item + i],
+              sizeof(timeline->items[0]));
+   }
+   memset(&timeline->items[timeline->n_items - item], 0,
+          sizeof(timeline->items[0]) * item);
+   timeline->n_items -= item;
+}
+
+static bool
+different_context(struct gputop_cc_oa_timeline *timeline,
+                  int item,
+                  const uint32_t *start,
+                  const uint32_t *end)
+{
+    uint32_t old_ctx_id = oa_report_get_ctx_id(start);
+    uint32_t new_ctx_id = oa_report_get_ctx_id(end);
+
+    if (old_ctx_id == new_ctx_id)
+        return false;
+
+    if (new_ctx_id == INVALID_CTX_ID) {
+        if (timeline->items[item].seen_idle)
+            return true;
+
+        timeline->items[item].seen_idle = true;
+        return false;
+    }
+
+    return true;
+}
+
+bool
+gputop_cc_oa_timeline_accumulate_reports(struct gputop_cc_oa_timeline *timeline,
+                                         const uint8_t *report0,
+                                         const uint8_t *report1)
+{
+    const uint32_t *start = (const uint32_t *)report0;
+    const uint32_t *end = (const uint32_t *)report1;
+    uint32_t ctx_id = oa_report_get_ctx_id(end);
+    int item = MAX(timeline->n_items - 1, 0);
+
+    assert(timeline);
+
+    if (different_context(timeline, item, start, end)) {
+        if (timeline->clock.initialized)
+            item = timeline->n_items++;
+
+        timeline->items[item].ctx_id = ctx_id;
+    }
+
+    accumulate_reports(timeline->metric_set,
+                       &timeline->clock,
+                       start, end,
+                       timeline->items[item].deltas,
+                       &timeline->items[item].first_timestamp,
+                       &timeline->items[item].last_timestamp);
+
+    return true;
+}
+
+uint64_t
+gputop_cc_oa_timeline_elapsed(struct gputop_cc_oa_timeline *timeline)
+{
+    return timeline->n_items > 0 &&
+        (timeline->items[timeline->n_items - 1].last_timestamp -
+         timeline->items[0].first_timestamp) > timeline->aggregation_period;
+}
+
+bool
+gputop_cc_oa_timeline_full(struct gputop_cc_oa_timeline *timeline)
+{
+    return timeline->n_items == (ARRAY_SIZE(timeline->items) - 1);
 }

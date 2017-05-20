@@ -1,0 +1,18 @@
+{
+    "name": "gputop-timeline",
+    "description": "GPU Top Timeline Tool",
+    "repository": "https://github.com/rib/gputop",
+    "version": "0.0.1",
+    "license": "MIT",
+    "dependencies": {
+        "gputop": "file:../gputop-client",
+        "argparse": "^1.0.7",
+        "sprintf": "^0.1.5"
+    },
+    "bin": {
+        "gputop-timeline": "gputop-timeline.js"
+    },
+    "engines": {
+        "node": ">=5.0.0"
+    }
+}

@@ -939,6 +939,8 @@ handle_close_stream(h2o_websocket_conn_t *conn,
             return;
         }
     }
+
+
 }
 
 bool
