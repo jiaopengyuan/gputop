@@ -27,6 +27,9 @@
         "gputop-client-c.c",
         "gputop-client-c-bindings.h",
         "gputop-client-c-bindings.cpp",
+        "gputop-hash-table.h",
+        "gputop-hash-table.c",
+        "gputop-util.h",
       ],
     }
   ]

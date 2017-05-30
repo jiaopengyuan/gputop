@@ -33,6 +33,7 @@ import pylibs.codegen as codegen
 h = None
 c = None
 
+avail_funcs = {}
 max_funcs = {}
 read_funcs = {}
 xml_equations = None
@@ -318,6 +319,37 @@ def data_type_to_ctype(ret_type):
     else:
         raise Exception("Unhandled case for mapping \"" + ret_type + "\" to a C type")
 
+def output_counter_availability(set, counter):
+    availability = counter.get('availability')
+    if not availability:
+        return "NULL";
+
+    c("\n")
+    c("/* {0} :: {1} */".format(set.get('name'), counter.get('name')))
+    c("static bool")
+
+    avail_sym = "{0}__{1}__{2}__available".format(set.get('chipset').lower(), set.get('underscore_name'), counter.get('underscore_name'))
+    c(avail_sym + "(struct gputop_devinfo *devinfo)\n")
+
+    c("{")
+    c.indent(3)
+    expression = splice_rpn_expression(set, counter, availability)
+    lines = expression.split(' && ')
+    n_lines = len(lines)
+    if n_lines == 1:
+        c("return " + lines[0] + ";")
+    else:
+        c("return " + lines[0] + " &&")
+        c.indent(4)
+        for i in range(1, (n_lines - 1)):
+            c(lines[i] + " &&")
+        c(lines[(n_lines - 1)] + ";")
+        c.outdent(4)
+    c.outdent(3)
+    c("}")
+
+    return avail_sym
+
 
 def output_counter_read(set, counter, counter_vars):
     c("\n")
@@ -398,23 +430,24 @@ def output_counter_report(set, counter):
 
     c("\n")
 
-    availability = counter.get('availability')
-    if availability:
-        expression = splice_rpn_expression(set, counter, availability)
-        lines = expression.split(' && ')
-        n_lines = len(lines)
-        if n_lines == 1:
-            c("if (" + lines[0] + ") {")
-        else:
-            c("if (" + lines[0] + " &&")
-            c.indent(4)
-            for i in range(1, (n_lines - 1)):
-                c(lines[i] + " &&")
-            c(lines[(n_lines - 1)] + ") {")
-            c.outdent(4)
-        c.indent(4)
+    # availability = counter.get('availability')
+    # if availability:
+    #     expression = splice_rpn_expression(set, counter, availability)
+    #     lines = expression.split(' && ')
+    #     n_lines = len(lines)
+    #     if n_lines == 1:
+    #         c("if (" + lines[0] + ") {")
+    #     else:
+    #         c("if (" + lines[0] + " &&")
+    #         c.indent(4)
+    #         for i in range(1, (n_lines - 1)):
+    #             c(lines[i] + " &&")
+    #         c(lines[(n_lines - 1)] + ") {")
+    #         c.outdent(4)
+    #     c.indent(4)
 
     c("counter = &metric_set->counters[metric_set->n_counters++];\n")
+    c("counter->available = " + avail_funcs[counter.get('symbol_name')] + ";\n")
     c("counter->oa_counter_read_" + data_type + " = " + read_funcs[counter.get('symbol_name')] + ";\n")
     c("counter->name = \"" + counter.get('name') + "\";\n")
     c("counter->symbol_name = \"" + counter.get('symbol_name') + "\";\n")
@@ -423,14 +456,15 @@ def output_counter_report(set, counter):
     c("counter->data_type = GPUTOP_PERFQUERY_COUNTER_DATA_" + data_type_uc + ";\n")
     c("counter->max_" + data_type + " = " + max_funcs[counter.get('symbol_name')] + "\n")
 
-    if availability:
-        c.outdent(4)
-        c("}\n")
+    # if availability:
+    #     c.outdent(4)
+    #     c("}\n")
 
 
 def main():
     global c
     global h
+    global avail_funcs
     global max_funcs
     global read_funcs
     global xml_equations
@@ -541,6 +575,7 @@ def main():
         """))
 
     for set in tree.findall(".//set"):
+        avail_funcs = {}
         max_funcs = {}
         read_funcs = {}
         counter_vars = {}
@@ -550,6 +585,7 @@ def main():
 
         for counter in counters:
             empty_vars = {}
+            avail_funcs[counter.get('symbol_name')] = output_counter_availability(set, counter)
             read_funcs[counter.get('symbol_name')] = output_counter_read(set, counter, counter_vars)
             max_funcs[counter.get('symbol_name')] = output_counter_max(set, counter, counter_vars)
             counter_vars["$" + counter.get('symbol_name')] = counter

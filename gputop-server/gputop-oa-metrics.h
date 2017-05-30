@@ -96,6 +96,8 @@ struct gputop_metric_set_counter
                                       const struct gputop_metric_set *metric_set,
                                       uint64_t *deltas);
    };
+
+   bool (*available)(struct gputop_devinfo *devinfo);
 };
 
 struct gputop_metric_set

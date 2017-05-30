@@ -42,6 +42,7 @@
 
 #include "gputop-client-c.h"
 #include "gputop-client-c-runtime.h"
+#include "gputop-util.h"
 
 #include "oa-hsw.h"
 #include "oa-bdw.h"
@@ -67,6 +68,71 @@ struct oa_sample {
    uint8_t oa_report[];
 };
 
+#define U32_TO_VOID(val) ((void*) (uintptr_t) (val))
+
+static uint32_t
+oa_report_get_ctx_id(uint32_t *report32)
+{
+    /* TODO: deal with HSW... */
+    return report32[2] & 0x1fffff;
+}
+
+static void
+gputop_update_device_info_for_report(struct gputop_cc_stream *stream,
+                                     uint32_t *report32)
+{
+    uint32_t ctx_id = oa_report_get_ctx_id(report32);
+    struct gputop_hash_entry *sseu_entry =
+        gputop_hash_table_search(stream->sseu_configs, U32_TO_VOID(ctx_id));
+    struct drm_i915_perf_sseu_change sseu_data = { 0, };
+    uint32_t s;
+    uint64_t s_max, ss_max, ss_mask;
+    uint64_t slice_mask;
+    uint64_t subslice_mask;
+
+    if (sseu_entry) {
+        memcpy(&sseu_data, sseu_entry->data, sizeof(sseu_data));
+    } else {
+        gputop_cr_console_error("missing sseu configuration for context %u/0x%x",
+                                ctx_id, ctx_id);
+    }
+
+    slice_mask = sseu_data.sseu.packed.slice_mask;
+    ss_mask = sseu_data.sseu.packed.subslice_mask;
+
+    gputop_devinfo.slice_mask = slice_mask;
+    gputop_devinfo.n_eu_slices = __builtin_popcount(slice_mask);
+
+    if (IS_HASWELL(gputop_devinfo.devid)) {
+        s_max = 2;
+        ss_max = 3;
+    } else if (IS_BROADWELL(gputop_devinfo.devid)) {
+        s_max = 2;
+        ss_max = 3;
+    } else if (IS_CHERRYVIEW(gputop_devinfo.devid)) {
+        s_max = 1;
+        ss_max = 2;
+    } else if (IS_GEN9(gputop_devinfo.devid)) {
+        s_max = 3;
+        ss_max = 3;
+    }
+
+    /* Note: the _SUBSLICE_MASK param only reports a global subslice
+     * mask which applies to all slices.
+     *
+     * Note: some of the metrics we have (as described in XML) are
+     * conditional on a $SubsliceMask variable which is expected to
+     * also reflect the slice mask by packing together subslice masks
+     * for each slice in one value..
+     */
+    for (s = 0; s < s_max; s++) {
+        if (slice_mask & (1ULL << s)) {
+            subslice_mask |= ss_mask << (ss_max * s);
+        }
+    }
+    gputop_devinfo.subslice_mask = subslice_mask;
+    gputop_devinfo.n_eu_sub_slices = __builtin_popcount(subslice_mask);
+}
 
 static void __attribute__((noreturn))
 assert_not_reached(void)
@@ -115,6 +181,11 @@ forward_oa_accumulator_events(struct gputop_cc_stream *stream,
         uint64_t max = 0;
 
         struct gputop_metric_set_counter *counter = &oa_metric_set->counters[i];
+
+        /* Don't update the counter if the current configuration makes it
+         * unavailable. */
+        if (counter->available && !counter->available(&gputop_devinfo))
+            continue;
 
         switch(counter->data_type) {
             case GPUTOP_PERFQUERY_COUNTER_DATA_UINT64:
@@ -247,6 +318,9 @@ gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
             struct oa_sample *sample = (struct oa_sample *)header;
 
             if (last) {
+                gputop_update_device_info_for_report(stream,
+                                                     (uint32_t *) sample->oa_report);
+
                 for (int i = 0; i < n_accumulators; i++) {
                     struct gputop_cc_oa_accumulator *oa_accumulator =
                         accumulators[i];
@@ -274,6 +348,28 @@ gputop_cc_handle_i915_perf_message(struct gputop_cc_stream *stream,
 
             last = sample->oa_report;
 
+            break;
+        }
+
+        case DRM_I915_PERF_RECORD_SSEU_CHANGE: {
+            struct drm_i915_perf_sseu_change *_sseu_change =
+                (struct drm_i915_perf_sseu_change *)(header + 1);
+            struct gputop_hash_entry *sseu_entry =
+                gputop_hash_table_search(stream->sseu_configs,
+                                         U32_TO_VOID(_sseu_change->hw_id));
+
+            if (sseu_entry == NULL) {
+                struct drm_i915_perf_sseu_change *sseu_change =
+                    malloc(sizeof(*sseu_change));
+                memcpy(sseu_change, _sseu_change, sizeof(*sseu_change));
+                gputop_hash_table_insert(stream->sseu_configs,
+                                         U32_TO_VOID(sseu_change->hw_id),
+                                         sseu_change);
+            } else {
+                struct drm_i915_perf_sseu_change *sseu_change =
+                    (struct drm_i915_perf_sseu_change *) sseu_entry->data;
+                memcpy(sseu_change, _sseu_change, sizeof(*sseu_change));
+            }
             break;
         }
 
@@ -410,14 +506,15 @@ gputop_cc_update_system_metrics(void)
 struct gputop_cc_stream * EMSCRIPTEN_KEEPALIVE
 gputop_cc_oa_stream_new(const char *hw_config_guid)
 {
-    struct gputop_cc_stream *stream = malloc(sizeof(*stream));
+    struct gputop_cc_stream *stream =
+        (struct gputop_cc_stream *) xmalloc0(sizeof(*stream));
 
     assert(stream);
 
-    memset(stream, 0, sizeof(*stream));
-
     stream->type = STREAM_TYPE_OA;
 
+    stream->sseu_configs = gputop_hash_table_create(gputop_hash_pointer,
+                                                    gputop_key_pointer_equal);
     stream->oa_metric_set = gputop_cr_lookup_metric_set(hw_config_guid);
     assert(stream->oa_metric_set);
     assert(stream->oa_metric_set->perf_oa_format);
@@ -428,11 +525,10 @@ gputop_cc_oa_stream_new(const char *hw_config_guid)
 struct gputop_cc_stream * EMSCRIPTEN_KEEPALIVE
 gputop_cc_tracepoint_stream_new(void)
 {
-    struct gputop_cc_stream *stream = malloc(sizeof(*stream));
+    struct gputop_cc_stream *stream =
+        (struct gputop_cc_stream *) xmalloc0(sizeof(*stream));
 
     assert(stream);
-
-    memset(stream, 0, sizeof(*stream));
 
     stream->type = STREAM_TYPE_TRACEPOINT;
 
@@ -480,6 +576,11 @@ gputop_cc_tracepoint_add_field(struct gputop_cc_stream *stream,
     field->offset = offset;
 }
 
+static void delete_sseu_entry(struct gputop_hash_entry *entry)
+{
+    free(entry->data);
+}
+
 void EMSCRIPTEN_KEEPALIVE
 gputop_cc_stream_destroy(struct gputop_cc_stream *stream)
 {
@@ -487,6 +588,7 @@ gputop_cc_stream_destroy(struct gputop_cc_stream *stream)
 
     assert(stream);
 
+    gputop_hash_table_destroy(stream->sseu_configs, delete_sseu_entry);
     free(stream->continuation_report);
     free(stream);
 }

@@ -33,6 +33,8 @@
 #include <string.h>
 #include <sys/types.h>
 
+#include "gputop-hash-table.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -69,11 +71,17 @@ struct gputop_cc_stream {
      */
     struct gputop_metric_set *oa_metric_set;
 
+    /*
+     * SSEU configurations :
+     *    key: hw_id
+     *    data: sseu config
+     */
+    struct gputop_hash_table *sseu_configs;
+
     /* Aggregation may happen accross multiple perf data messages
      * so we may need to copy the last report so that aggregation
      * can continue with the next message... */
     uint8_t *continuation_report;
-
 
     /*
      * Tracepoint streams...

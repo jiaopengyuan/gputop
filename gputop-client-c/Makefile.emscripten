@@ -34,7 +34,9 @@ gputop_web_SOURCE= \
 	gputop-client-c-runtime.c \
 	$(oa_generated_sources) \
 	gputop-client-c.c \
-	gputop-oa-counters.c
+	gputop-oa-counters.c \
+	gputop-hash-table.c \
+	gputop-util.c
 gputop_web_OBJECTS=$(patsubst %.c, %.o, $(gputop_web_SOURCE))
 
 all:: gputop-web.bc gputop-web.js

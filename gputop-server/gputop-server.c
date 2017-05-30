@@ -1184,11 +1184,11 @@ handle_get_features(h2o_websocket_conn_t *conn,
     devinfo.devid = gputop_devinfo.devid;
     devinfo.gen = gputop_devinfo.gen;
     devinfo.n_eus = gputop_devinfo.n_eus;
-    devinfo.n_eu_slices = gputop_devinfo.n_eu_slices;
-    devinfo.n_eu_sub_slices = gputop_devinfo.n_eu_sub_slices;
-    devinfo.eu_threads_count = gputop_devinfo.eu_threads_count;
-    devinfo.subslice_mask = gputop_devinfo.subslice_mask;
-    devinfo.slice_mask = gputop_devinfo.slice_mask;
+    /* devinfo.n_eu_slices = gputop_devinfo.n_eu_slices; */
+    /* devinfo.n_eu_sub_slices = gputop_devinfo.n_eu_sub_slices; */
+    /* devinfo.eu_threads_count = gputop_devinfo.eu_threads_count; */
+    /* devinfo.subslice_mask = gputop_devinfo.subslice_mask; */
+    /* devinfo.slice_mask = gputop_devinfo.slice_mask; */
     devinfo.timestamp_frequency = gputop_devinfo.timestamp_frequency;
     devinfo.gt_min_freq = gputop_devinfo.gt_min_freq;
     devinfo.gt_max_freq = gputop_devinfo.gt_max_freq;

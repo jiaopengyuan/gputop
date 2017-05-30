@@ -35,13 +35,21 @@
 
 #define I915_PARAM_SUBSLICE_TOTAL	33
 #define I915_PARAM_EU_TOTAL		34
-#define I915_PARAM_SLICE_MASK		45
-#define I915_PARAM_SUBSLICE_MASK	46
 
 typedef struct i915_getparam {
         int param;
         int *value;
 } i915_getparam_t;
+
+union drm_i915_gem_param_sseu {
+	struct {
+		uint8_t slice_mask;
+		uint8_t subslice_mask;
+		uint8_t min_eu_per_subslice;
+		uint8_t max_eu_per_subslice;
+	} packed;
+	uint64_t value;
+};
 
 struct drm_i915_gem_context_create {
         /*  output: id of new context*/
@@ -110,6 +118,11 @@ enum i915_perf_property_id {
 	 */
 	DRM_I915_PERF_PROP_OA_EXPONENT,
 
+	/**
+	 * Configure the stream to monitor sseu configuration changes.
+	 */
+	DRM_I915_PERF_PROP_SSEU_CHANGE,
+
 	DRM_I915_PERF_PROP_MAX /* non-ABI */
 };
 
@@ -174,7 +187,22 @@ enum i915_perf_record_type {
 	 */
 	DRM_I915_PERF_RECORD_OA_BUFFER_LOST = 3,
 
+	/**
+	 * A change in the sseu configuration happened.
+	 *
+	 * struct {
+	 *     struct drm_i915_perf_record_header header;
+	 *     { struct drm_i915_perf_sseu_change change; } && DRM_I915_PERF_PROP_SSEU_CHANGE
+	 * };
+	 */
+	DRM_I915_PERF_RECORD_SSEU_CHANGE = 4,
+
 	DRM_I915_PERF_RECORD_MAX /* non-ABI */
+};
+
+struct drm_i915_perf_sseu_change {
+	uint32_t hw_id;
+	union drm_i915_gem_param_sseu sseu;
 };
 
 #ifndef EMSCRIPTEN

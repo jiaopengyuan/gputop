@@ -290,8 +290,6 @@ GputopCSV.prototype.update_features = function(features)
         stderr_log.warn("\nCSV: GPU Info:");
         stderr_log.warn("CSV:   Model: " + features.devinfo.get_prettyname());
         stderr_log.warn("CSV:   N EUs: " + features.devinfo.get_n_eus().toInt());
-        stderr_log.warn("CSV:   N EU Slices: " + features.devinfo.get_n_eu_slices().toInt());
-        stderr_log.warn("CSV:   N EU Sub Slices Per Slice: " + features.devinfo.get_n_eu_sub_slices().toInt());
         stderr_log.warn("CSV:   EU Threads Count (total): " + features.devinfo.get_eu_threads_count().toInt());
         stderr_log.warn("CSV:   Min Frequncy: " + features.devinfo.get_gt_min_freq().toInt() + "Hz");
         stderr_log.warn("CSV:   Max Frequncy: " + features.devinfo.get_gt_max_freq().toInt() + "Hz");

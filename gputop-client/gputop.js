@@ -1371,40 +1371,24 @@ Gputop.prototype.request_features = function() {
         case 'hsw':
             demo_devinfo.set('devid', 0x0422);
             demo_devinfo.set('gen', 7);
-            demo_devinfo.set('n_eu_slices', 2);
-            demo_devinfo.set('n_eu_sub_slices', 2);
             n_eus = 40;
-            demo_devinfo.set('slice_mask', 0x3);
-            demo_devinfo.set('subslice_mask', 0xf);
             break;
         case 'bdw':
             demo_devinfo.set('devid', 0x1616);
             demo_devinfo.set('gen', 8);
-            demo_devinfo.set('n_eu_slices', 2);
-            demo_devinfo.set('n_eu_sub_slices', 3);
             n_eus = 48;
-            demo_devinfo.set('slice_mask', 0x3);
-            demo_devinfo.set('subslice_mask', 0x3f);
             break;
         case 'chv':
             demo_devinfo.set('devid', 0x22b0);
             demo_devinfo.set('gen', 8);
-            demo_devinfo.set('n_eu_slices', 1);
-            demo_devinfo.set('n_eu_sub_slices', 2);
             n_eus = 16;
-            demo_devinfo.set('slice_mask', 0x1);
-            demo_devinfo.set('subslice_mask', 0x3);
             break;
         case 'sklgt2':
         case 'sklgt3':
         case 'sklgt4':
             demo_devinfo.set('devid', 0x1926);
             demo_devinfo.set('gen', 9);
-            demo_devinfo.set('n_eu_slices', 3);
-            demo_devinfo.set('n_eu_sub_slices', 3);
             n_eus = 72;
-            demo_devinfo.set('slice_mask', 0x7);
-            demo_devinfo.set('subslice_mask', 0x1ff);
             demo_devinfo.set('timestamp_frequency', 12000000);
             break;
         default:

@@ -885,8 +885,6 @@ GputopUI.prototype.update_features = function(features) {
 
     $("#gputop-gpu").html( features.devinfo.get_prettyname() );
     $("#gputop-n-eus").html( features.devinfo.get_n_eus().toInt() );
-    $("#gputop-n-eu-slices").html( features.devinfo.get_n_eu_slices().toInt()  );
-    $("#gputop-n-eu-sub-slices").html( features.devinfo.get_n_eu_sub_slices().toInt()  );
     $("#gputop-n-eu-threads-count").html( features.devinfo.get_eu_threads_count().toInt()  );
     $("#gputop-minimum-frequency").html( features.devinfo.get_gt_min_freq().toInt() + "Hz"  );
     $("#gputop-maximum-frequency").html( features.devinfo.get_gt_max_freq().toInt() + "Hz"  );

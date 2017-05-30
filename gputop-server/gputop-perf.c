@@ -410,6 +410,9 @@ gputop_open_i915_perf_oa_stream(struct gputop_metric_set *metric_set,
                 ctx->fd, ctx->id);
         }
 
+        properties[p++] = DRM_I915_PERF_PROP_SSEU_CHANGE;
+        properties[p++] = true;
+
         param.properties_ptr = (uint64_t)properties;
         param.num_properties = p / 2;
 
@@ -692,10 +695,6 @@ init_dev_info(int drm_fd, uint32_t devid)
 
     if (gputop_fake_mode) {
             gputop_devinfo.n_eus = 10;
-            gputop_devinfo.n_eu_slices = 1;
-            gputop_devinfo.n_eu_sub_slices = 1;
-            gputop_devinfo.slice_mask = 0x1;
-            gputop_devinfo.subslice_mask = 0x1;
             gputop_devinfo.gt_min_freq = 500;
             gputop_devinfo.gt_min_freq = 1100;
     } else {
@@ -703,22 +702,12 @@ init_dev_info(int drm_fd, uint32_t devid)
             gputop_devinfo.gen = 7;
             if (IS_HSW_GT1(devid)) {
                 gputop_devinfo.n_eus = 10;
-                gputop_devinfo.n_eu_slices = 1;
-                gputop_devinfo.n_eu_sub_slices = 1;
                 gputop_devinfo.slice_mask = 0x1;
                 gputop_devinfo.subslice_mask = 0x1;
             } else if (IS_HSW_GT2(devid)) {
                 gputop_devinfo.n_eus = 20;
-                gputop_devinfo.n_eu_slices = 1;
-                gputop_devinfo.n_eu_sub_slices = 2;
-                gputop_devinfo.slice_mask = 0x1;
-                gputop_devinfo.subslice_mask = 0x3;
             } else if (IS_HSW_GT3(devid)) {
                 gputop_devinfo.n_eus = 40;
-                gputop_devinfo.n_eu_slices = 2;
-                gputop_devinfo.n_eu_sub_slices = 2;
-                gputop_devinfo.slice_mask = 0x3;
-                gputop_devinfo.subslice_mask = 0xf;
             } else {
                 fprintf(stderr, "Unknown Haswell System\n");
                 return false;
@@ -726,23 +715,23 @@ init_dev_info(int drm_fd, uint32_t devid)
         } else { /* Gen 8+ */
             i915_getparam_t gp;
             int n_eus = 0;
-            int slice_mask = 0;
-            int ss_mask = 0;
-            int s_max;
-            int ss_max;
-            uint64_t subslice_mask = 0;
-            int s;
+            /* int slice_mask = 0; */
+            /* int ss_mask = 0; */
+            /* int s_max; */
+            /* int ss_max; */
+            /* uint64_t subslice_mask = 0; */
+            /* int s; */
 
             if (IS_BROADWELL(devid)) {
-                s_max = 2;
-                ss_max = 3;
+                /* s_max = 2; */
+                /* ss_max = 3; */
                 gputop_devinfo.gen = 8;
             } else if (IS_CHERRYVIEW(devid)) {
-                s_max = 1;
-                ss_max = 2;
+                /* s_max = 1; */
+                /* ss_max = 2; */
                 gputop_devinfo.gen = 8;
             } else if (IS_GEN9(devid)) {
-                s_max = 3;
+                /* s_max = 3; */
 
                 /* XXX: beware that the kernel (as of writing) actually works
                  * as if ss_max == 4 since the HW register that reports the
@@ -751,7 +740,7 @@ init_dev_info(int drm_fd, uint32_t devid)
                  * with 3 bits per slice since that's what the counter
                  * availability expressions in XML expect.
                  */
-                ss_max = 3;
+                /* ss_max = 3; */
                 gputop_devinfo.gen = 9;
 
                 if (IS_BROXTON(devid)) {
@@ -768,33 +757,7 @@ init_dev_info(int drm_fd, uint32_t devid)
             gp.value = &n_eus;
             perf_ioctl(drm_fd, I915_IOCTL_GETPARAM, &gp);
 
-            gp.param = I915_PARAM_SLICE_MASK;
-            gp.value = &slice_mask;
-            perf_ioctl(drm_fd, I915_IOCTL_GETPARAM, &gp);
-
-            gp.param = I915_PARAM_SUBSLICE_MASK;
-            gp.value = &ss_mask;
-            perf_ioctl(drm_fd, I915_IOCTL_GETPARAM, &gp);
-
             gputop_devinfo.n_eus = n_eus;
-            gputop_devinfo.n_eu_slices = __builtin_popcount(slice_mask);
-            gputop_devinfo.slice_mask = slice_mask;
-
-            /* Note: the _SUBSLICE_MASK param only reports a global subslice
-             * mask which applies to all slices.
-             *
-             * Note: some of the metrics we have (as described in XML) are
-             * conditional on a $SubsliceMask variable which is expected to
-             * also reflect the slice mask by packing together subslice masks
-             * for each slice in one value..
-             */
-            for (s = 0; s < s_max; s++) {
-                if (slice_mask & (1<<s)) {
-                    subslice_mask |= ss_mask << (ss_max * s);
-                }
-            }
-            gputop_devinfo.subslice_mask = subslice_mask;
-            gputop_devinfo.n_eu_sub_slices = __builtin_popcount(subslice_mask);
         }
 
         assert(drm_card >= 0);
@@ -1091,10 +1054,12 @@ gputop_i915_perf_print_records(struct gputop_perf_stream *stream,
         case DRM_I915_PERF_RECORD_OA_REPORT_LOST:
             printf("- OA report lost\n");
             break;
-        case DRM_I915_PERF_RECORD_SAMPLE: {
+        case DRM_I915_PERF_RECORD_SAMPLE:
             printf("- Sample\n");
             break;
-        }
+        case DRM_I915_PERF_RECORD_SSEU_CHANGE:
+            printf("- SSEU configuration change\n");
+            break;
 
         default:
             printf("- Spurious header type = %d\n", header->type);
@@ -1262,7 +1227,6 @@ read_i915_perf_samples(struct gputop_perf_stream *stream)
                 stream->oa.last_buf_idx = buf_idx;
                 break;
             }
-
             default:
                 dbg("i915 perf: Spurious header type = %d\n", header->type);
             }
