@@ -530,7 +530,6 @@ function init(pretty_print) {
     }, () => { // onerror
         stderr_log.log("Failed to connect to address = \"" + args.address + "\"");
     });
-
 }
 
 if (args.file) {
