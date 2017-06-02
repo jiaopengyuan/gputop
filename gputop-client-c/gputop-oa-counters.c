@@ -294,16 +294,21 @@ different_context(struct gputop_cc_oa_timeline *timeline,
                   const uint32_t *start,
                   const uint32_t *end)
 {
-    uint32_t old_ctx_id = oa_report_get_ctx_id(start);
+    uint32_t old_ctx_id = timeline->items[item].ctx_id;
     uint32_t new_ctx_id = oa_report_get_ctx_id(end);
 
     if (old_ctx_id == new_ctx_id)
         return false;
 
-    if (new_ctx_id == INVALID_CTX_ID) {
-        if (timeline->items[item].seen_idle)
-            return true;
+    if (new_ctx_id != INVALID_CTX_ID)
+        return true;
 
+    /*
+     * Dealing with switch to an invalid ctx id from here. This usually mean
+     * the GPU has becomed idle. Give it a chance to pickup another job of the
+     * same ctx before considering the report idle.
+     */
+    if (!timeline->items[item].seen_idle) {
         timeline->items[item].seen_idle = true;
         return false;
     }

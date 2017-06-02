@@ -28,6 +28,8 @@ const fs = require('fs');
 const ArgumentParser = require('argparse').ArgumentParser;
 const sp = require('sprintf');
 
+const ONE_SECOND_IN_NS = 1000000000;
+
 /* Don't want to pollute timeline output to stdout with log messages... */
 var stderr_log = new console.Console(process.stderr, process.stderr);
 
@@ -147,11 +149,16 @@ GputopTimeline.prototype.update_features = function(features)
         return;
     }
 
-    const max_period = 1000000000;
+    if (args.period < 0 || args.period > 1000000000) {
+        stderr_log.error('Sampling period out of range [0, 1000000000]');
+        process.exit(1);
+        return;
+    }
+
     var oa_sampling_state =
-        this.calculate_sample_state_for_accumulation_period(max_period,
-                                                            max_period, // max period to account for 32bit counter overflow
-                                                            max_period / 10); // 10% error margin
+        this.calculate_sample_state_for_accumulation_period(args.period,
+                                                            40000000, // max period to account for 32bit counter overflow
+                                                            args.period / 10); // 10% error margin
 
     if (args.columns === 'list') {
         stderr_log.log("\nList of counters selectable with --columns=... (comma separated):\n");
@@ -258,8 +265,6 @@ GputopTimeline.prototype.update_features = function(features)
         stderr_log.warn("Timeline:   Columns: " + args.columns);
         stderr_log.warn("Timeline:   OA Hardware Sampling Exponent: " + oa_sampling_state.oa_exponent);
         stderr_log.warn("Timeline:   OA Hardware Period: " + oa_sampling_state.period + "ns");
-        var real_accumulation_period = oa_sampling_state.factor * oa_sampling_state.period;
-        stderr_log.warn("Timeline:   Accumulation period: " + real_accumulation_period + "ns (" + oa_sampling_state.period + "ns * " + oa_sampling_state.factor + ")");
 
         stderr_log.warn("\nTimeline: OS Info:");
         stderr_log.warn("Timeline:   Kernel Build: " + features.get_kernel_build().trim());
@@ -294,7 +299,7 @@ GputopTimeline.prototype.update_features = function(features)
                              * requested accumulation period, so we slightly
                              * reduce what we request to avoid overshooting.
                              */
-                            metric.timeline = metric.create_oa_timeline({ period_ns: max_period * 0.9999 });
+                            metric.timeline = metric.create_oa_timeline({ period_ns: ONE_SECOND_IN_NS * 0.9999 });
 
                             this.column_titles_.map((line) => {
                                 this.stream.write(line + this.endl);
@@ -313,17 +318,6 @@ GputopTimeline.prototype.update_features = function(features)
 
 function write_rows(metric, timeline, task)
 {
-    // /* Note: this ref[erence] counter is pre-dermined to be one with
-    //  * counter.record_data === true which we know we have valid timestamp
-    //  * information for that we can use for the whole row.
-    //  */
-    // var ref_counter = this.counters_[this.reference_column];
-    // var ref_accumulated_counter =
-    //     task.accumulated_counters[ref_counter.cc_counter_id_];
-
-    // stderr_log.assert(ref_accumulated_counter.counter === ref_counter,
-    //            "Spurious reference counter state");
-
     var row_timestamp = task.end_timestamp - task.start_timestamp;//ref_accumulated_counter.latest_value;
     var row = "";
 
@@ -432,6 +426,15 @@ parser.addArgument(
         defaultValue: 'list',
         constant: 'list',
         nargs: '?'
+    }
+);
+
+parser.addArgument(
+    [ '-p', '--period' ],
+    {
+        help: 'Accumulate HW samples over this period (in nanoseconds). Actual accumulation period may overrun by up to 10%%. (default = 100 macrosecond)',
+        type: 'int',
+        defaultValue: 10 * 1000
     }
 );
 
