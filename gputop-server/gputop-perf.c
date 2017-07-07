@@ -435,7 +435,7 @@ gputop_open_i915_perf_oa_stream(struct gputop_metric_set *metric_set,
                 ctx->fd, ctx->id);
         }
 
-        param.properties_ptr = (uint64_t)properties;
+        param.properties_ptr = (uintptr_t)properties;
         param.num_properties = p / 2;
 
         stream_fd = perf_ioctl(oa_stream_fd, DRM_IOCTL_I915_PERF_OPEN, &param);
@@ -1433,7 +1433,50 @@ open_render_node(struct intel_device *dev)
     return fd;
 }
 
-bool
+static void
+gputop_reload_userspace_metrics(int drm_fd)
+{
+    struct gputop_hash_entry *metrics_entry;
+
+    if (!gputop_devinfo.has_dynamic_configs)
+        return;
+
+    gputop_hash_table_foreach(metrics, metrics_entry) {
+        struct gputop_metric_set *metric_set =
+            (struct gputop_metric_set*)metrics_entry->data;
+        struct drm_i915_perf_oa_config config;
+        char config_path[256];
+        uint64_t config_id;
+        int ret;
+
+        snprintf(config_path, sizeof(config_path),
+                 "/sys/class/drm/card%d/metrics/%s/id",
+                 drm_card, metric_set->hw_config_guid);
+
+        config_id = gputop_read_file_uint64(config_path);
+        if (config_id > 0)
+            ioctl(drm_fd, DRM_IOCTL_I915_PERF_REMOVE_CONFIG, &config_id);
+
+        memset(&config, 0, sizeof(config));
+
+        config.uuid = (uintptr_t) metric_set->hw_config_guid;
+        config.n_mux_regs = metric_set->n_mux_regs;
+        config.mux_regs = (uintptr_t) metric_set->mux_regs;
+
+        config.n_boolean_regs = metric_set->n_b_counter_regs;
+        config.boolean_regs = (uintptr_t) metric_set->b_counter_regs;
+
+        config.n_flex_regs = metric_set->n_flex_regs;
+        config.flex_regs = (uintptr_t) metric_set->flex_regs;
+
+        ret = ioctl(drm_fd, DRM_IOCTL_I915_PERF_ADD_CONFIG, &config);
+        if (ret < 0)
+            fprintf(stderr, "Failed to load %s (%s) metrics set in kernel: %s\n",
+                    metric_set->symbol_name, metric_set->hw_config_guid, strerror(errno));
+    }
+}
+
+static bool
 gputop_enumerate_metrics_via_sysfs(void)
 {
     DIR *metrics_dir;
@@ -1562,8 +1605,10 @@ gputop_perf_initialize(void)
     if (init_dev_info(drm_fd, intel_dev.device, &devinfo)) {
         if (gputop_fake_mode)
             return gputop_enumerate_metrics_fake();
-        else
+        else {
+            gputop_reload_userspace_metrics(drm_fd);
             return gputop_enumerate_metrics_via_sysfs();
+        }
     } else
         return false;
 }
