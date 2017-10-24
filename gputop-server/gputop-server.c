@@ -978,9 +978,11 @@ void  handle_update_hw_id_map(uint64_t *vgpu_id,
 {
   int i = 0;
   int UUID_length = 36;
-  DIR *vgpu_dir;
-  char *vgpu_path="/sys/bus/pci/devices/0000:00:02.0";
+  DIR *vgpu_dir, *vgpu_dir1;
+  //char *vgpu_path="/sys/bus/pci/devices/0000:00:02.0";
+  char *vgpu_path="/sys/devices/pci0000:00";
   char *vgpu_id_path, *hw_id_path;
+  char dir[] = "0000:00:02.0";
   struct dirent *entry;
   bool success_vgpu_id, success_hw_id;
 
@@ -990,7 +992,13 @@ void  handle_update_hw_id_map(uint64_t *vgpu_id,
         return;
   }
 
+  fprintf(stderr, "JPYNB\n");
   while (entry = readdir(vgpu_dir)) {
+      //if (entry->d_type == DT_DIR && !strcmp(entry->d_name, dir)) {
+      if (entry->d_type == DT_DIR) {
+        fprintf(stderr, "dir name is %s\n", entry->d_name);
+
+/*
       if (entry->d_type == DT_DIR && (strlen(entry->d_name)==UUID_length)) {
       int ret_vgpu_id_path = asprintf(&vgpu_id_path, "%s/%s/intel_vgpu/vgpu_id", vgpu_path, entry->d_name);
       assert(ret_vgpu_id_path != -1);
@@ -1003,6 +1011,7 @@ void  handle_update_hw_id_map(uint64_t *vgpu_id,
       free(hw_id_path);
       ctx_hw_id++;
       i++;
+*/
     }
   }
 
